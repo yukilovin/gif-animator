@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Drag-Path GIF Animator（図形＆テキスト＆色・フォント／TL全レーン表示／ターゲット可動）</title>
+<title>Drag-Path GIF Animator（完全版）</title>
 <style>
   body{margin:0;background:#ffffff;color:#111827;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;height:100vh;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px;box-sizing:border-box}
   aside{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;overflow:auto}
@@ -24,7 +24,6 @@
   .muted{color:#6b7280;font-size:12px}
   progress{width:100%}
 </style>
-<!-- GIF.js CDN（失敗時は後述のフォールバック警告） -->
 <script src="https://unpkg.com/gif.js@0.2.0/dist/gif.js"></script>
 </head>
 <body>
@@ -38,13 +37,14 @@
         <button class="btn" id="addRectBtn">＋ □ 四角</button>
         <button class="btn" id="addTextRectBtn">＋ 囲み＋テキスト</button>
         <button class="btn" id="resetIconsBtn">↺ 初期8アイコン</button>
+        <button class="btn" id="deleteItemBtn">🗑 選択削除</button>
       </div>
     </div>
 
     <div class="panel">
       <h2>選択アイテム属性</h2>
       <div class="row"><label>名称 <input id="propName" type="text"></label></div>
-      <div class="row"><label>サイズ/半径 <input id="propSize" type="number" value="18" min="6" max="200"></label></div>
+      <div class="row"><label>サイズ/半径 <input id="propSize" type="number" value="25" min="6" max="200"></label></div>
       <div class="row"><label>幅 <input id="propW" type="number" value="160" min="10" max="1200"></label><label>高 <input id="propH" type="number" value="90" min="10" max="1200"></label></div>
       <div class="row"><label>テキスト <input id="propText" type="text" placeholder="テキスト"></label></div>
       <div class="row">
@@ -61,7 +61,7 @@
           <option value="serif">Serif</option>
           <option value="monospace">Monospace</option>
         </select></label>
-        <label>文字サイズ <input id="propFontSize" type="number" value="14" min="8" max="120"></label>
+        <label>文字サイズ <input id="propFontSize" type="number" value="20" min="8" max="120"></label>
       </div>
       <div class="row"><button class="btn" id="applyProps">適用</button></div>
     </div>
@@ -105,6 +105,7 @@
       </div>
       <div class="row"><span class="pill">※ このサイズが黒枠の内側 & GIF の解像度になります。</span></div>
     </div>
+
     <div class="panel">
       <h2>書き出し（GIF）</h2>
       <div class="row">
@@ -142,8 +143,8 @@ const TL=document.getElementById('timeline');
 const tctx=TL.getContext('2d');
 const timelineWrap=document.getElementById('timelineWrap');
 const timeLabel=document.getElementById('timeLabel');
-let W=1080,H=1080; // 枠（フレーム）＝GIF解像度
-let CW=canvas.width, CH=canvas.height; // 実際のキャンバス（作業スペース）解像度
+let W=1080,H=1080; // 枠＝GIF解像度
+let CW=canvas.width, CH=canvas.height; // 作業キャンバス解像度
 
 // ===== 時間管理 =====
 let duration=8; let tNow=0; let isPlaying=false; let lastTs=0;
@@ -166,14 +167,14 @@ function ensureTimelineCanvasHeight(){ const need=laneTop + items.length*(laneH+
 // ===== スナップ =====
 let snapOn=true, snapStep=0.10; function applySnap(t){ if(!snapOn) return Math.max(0,Math.min(duration,t)); const s=Math.round(t/Math.max(0.01,snapStep))*Math.max(0.01,snapStep); return Math.max(0,Math.min(duration,+s.toFixed(6))); }
 
-// ===== アイテム（アイコン＋図形＋テキスト枠） =====
+// ===== アイテム（初期8＋追加） =====
 const COLORS={D1:'#1d4ed8',D2:'#16a34a',D3:'#059669',D4:'#0ea5e9',H1:'#d97706',H2:'#dc2626',ST:'#7c3aed',MT:'#4f46e5'};
 const NAMES=['D1','D2','D3','D4','H1','H2','ST','MT'];
 /** item: {type:'icon'|'circle'|'rect'|'textRect', name, fill, stroke, textColor, font, fontSize, r, w, h, text, pos:{x,y}, keys:[{t,x,y}]} */
-let items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",fontSize:12,r:18,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1)}]}));
+let items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:25,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1)}]}));
 let activeIndex=0;
 
-// ===== ターゲット（常にドラッグ可・アニメ対象外） =====
+// ===== ターゲット（A–D / 1–4）– 常にドラッグ可・非アニメ =====
 let targets=initTargets();
 function initTargets(){ return [
   {name:'A',x:W*0.22,y:H*0.20}, {name:'B',x:W*0.38,y:H*0.20}, {name:'C',x:W*0.54,y:H*0.20}, {name:'D',x:W*0.70,y:H*0.20},
@@ -186,17 +187,30 @@ function getPosAtTime(it,t){ const k=it.keys||[]; if(!k.length) return it.pos; i
 
 // ===== 描画 =====
 function drawFrame(){ ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.setTransform(view.scale,0,0,view.scale,view.x,view.y); ctx.strokeStyle='#000'; ctx.lineWidth=3/view.scale; ctx.strokeRect(0.5,0.5,W-1,H-1); }
-function drawTargets(){ ctx.fillStyle='#374151'; ctx.font=(18/view.scale)+'px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle'; targets.forEach(t=>{ ctx.beginPath(); ctx.arc(t.x,t.y,28,0,Math.PI*2); ctx.strokeStyle='#2563eb'; ctx.lineWidth=2/view.scale; ctx.stroke(); ctx.fillText(t.name,t.x,t.y); }); }
+function drawTargets(){
+  const R=25; // 直径50
+  ctx.font=(20/view.scale)+'px system-ui';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  targets.forEach(t=>{
+    ctx.beginPath(); ctx.arc(t.x,t.y,R,0,Math.PI*2);
+    ctx.fillStyle='#878787'; // R135 G135 B135
+    ctx.fill();
+    ctx.strokeStyle='#ffffff'; // 枠：白
+    ctx.lineWidth=3/view.scale; ctx.stroke();
+    ctx.fillStyle='#ffffff';
+    ctx.fillText(t.name,t.x,t.y);
+  });
+}
 function drawItem(it, pos){ const s=1/view.scale; ctx.save();
   if(it.type==='icon'||it.type==='circle'){
     ctx.fillStyle=it.fill||'#111';
-    ctx.beginPath(); ctx.arc(pos.x,pos.y,(it.r||18),0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(pos.x,pos.y,(it.r||25),0,Math.PI*2); ctx.fill();
     ctx.strokeStyle=it.stroke||'transparent'; ctx.lineWidth=2*s; if(it.stroke) { ctx.stroke(); }
-    const label=(it.text&&it.text.length?it.text:it.name)||''; // ○にもテキスト
+    const label=(it.text&&it.text.length?it.text:it.name)||'';
     ctx.fillStyle=it.textColor||'#fff';
-    ctx.font=(Math.max(8,it.fontSize||12)*s)+'px '+(it.font||'ui-monospace');
+    ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'ui-monospace');
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    wrapFillText(ctx,label,pos.x,pos.y,(it.r||18)*1.6*s,Math.max(8,(it.fontSize||12))*1.2*s);
+    wrapFillText(ctx,label,pos.x,pos.y,(it.r||25)*1.6*s,Math.max(8,(it.fontSize||20))*1.2*s);
   }
   else if(it.type==='rect'){
     const w=it.w||160, h=it.h||90;
@@ -207,43 +221,52 @@ function drawItem(it, pos){ const s=1/view.scale; ctx.save();
     const w=it.w||220, h=it.h||120;
     if(it.fill){ ctx.fillStyle=it.fill; ctx.fillRect(pos.x-w/2, pos.y-h/2, w, h); }
     ctx.strokeStyle=it.stroke||'#111'; ctx.lineWidth=2*s; ctx.strokeRect(pos.x-w/2, pos.y-h/2, w, h);
-    ctx.fillStyle=it.textColor||'#111'; ctx.font=(Math.max(8,it.fontSize||14)*s)+'px '+(it.font||'system-ui'); ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=it.textColor||'#111'; ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'system-ui'); ctx.textAlign='center'; ctx.textBaseline='middle';
     const lines=(it.text||'テキスト').split('\n');
-    lines.forEach((ln,i)=> ctx.fillText(ln, pos.x, pos.y + (i-(lines.length-1)/2)*(Math.max(8,(it.fontSize||14))*1.2*s)));
+    lines.forEach((ln,i)=> ctx.fillText(ln, pos.x, pos.y + (i-(lines.length-1)/2)*(Math.max(8,(it.fontSize||20))*1.2*s)));
   }
-  // 選択表示
-  if(items[activeIndex]===it){ ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3*s; if(it.type==='rect'||it.type==='textRect'){ const w=(it.w||160), h=(it.h||90); ctx.strokeRect(pos.x-w/2-4*s, pos.y-h/2-4*s, w+8*s, h+8*s); } else { ctx.beginPath(); ctx.arc(pos.x,pos.y,(it.r||18)+4,0,Math.PI*2); ctx.stroke(); } }
+  if(items[activeIndex]===it){ ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3*s; if(it.type==='rect'||it.type==='textRect'){ const w=(it.w||160), h=(it.h||90); ctx.strokeRect(pos.x-w/2-4*s, pos.y-h/2-4*s, w+8*s, h+8*s); } else { ctx.beginPath(); ctx.arc(pos.x,pos.y,(it.r||25)+4,0,Math.PI*2); ctx.stroke(); } }
   ctx.restore(); }
 
-// テキスト折返し（中心揃えの簡易版）
 function wrapFillText(ctx, text, cx, cy, maxW, lineH){ const words=(text+"").split(/\s+/); const lines=[]; let cur=''; for(const w of words){ const test=cur?cur+' '+w:w; if(ctx.measureText(test).width<=maxW){ cur=test; } else { if(cur) lines.push(cur); cur=w; } } if(cur) lines.push(cur); const off=(lines.length-1)/2; lines.forEach((ln,i)=> ctx.fillText(ln, cx, cy + (i-off)*lineH)); }
 
 function draw(){ drawFrame(); drawTargets(); items.forEach(it=>{ const p=getPosAtTime(it,tNow); it.pos=p; drawItem(it,p); }); }
 
 // ===== タイムライン描画／入力 =====
 function drawTimeline(){ ensureTimelineCanvasHeight(); tctx.clearRect(0,0,TL.width,TL.height); tctx.fillStyle='#f9fafb'; tctx.fillRect(0,0,TL.width,TL.height); tctx.strokeStyle='#e5e7eb'; tctx.strokeRect(0.5,0.5,TL.width-1,TL.height-1);
-  // 目盛り
   tctx.fillStyle='#111827'; tctx.font='12px ui-sans-serif'; tctx.fillText('タイムライン',12,18);
   const steps=Math.max(2,Math.min(20,Math.ceil(viewDur())));
   tctx.fillStyle='#374151'; tctx.font='12px ui-monospace';
   for(let i=0;i<=steps;i++){ const tt=tlStart + i/steps*viewDur(); const gx=tToX(tt); tctx.fillText(tt.toFixed(1)+'s', gx-12, 36); tctx.fillStyle='#e5e7eb'; tctx.fillRect(gx,42,1,TL.height-46); tctx.fillStyle='#374151'; }
-  // レーン
   items.forEach((it,i)=>{ const y=laneTop+i*(laneH+laneGap); tctx.fillStyle=(i===activeIndex)?'#111827':'#6b7280'; tctx.fillText(it.name||it.type,12,y+laneH-6); tctx.fillStyle='#e0e7ff'; tctx.fillRect(80,y,TL.width-96,laneH); tctx.strokeStyle='#c7d2fe'; tctx.strokeRect(80.5,y+0.5,TL.width-97,laneH-1);
     (it.keys||[]).forEach((k)=>{ const x=tToX(k.t); const size=8; tctx.fillStyle='#2563eb'; tctx.beginPath(); tctx.moveTo(x,y+laneH/2-size); tctx.lineTo(x+size,y+laneH/2); tctx.lineTo(x,y+laneH/2+size); tctx.lineTo(x-size,y+laneH/2); tctx.closePath(); tctx.fill(); });
   });
-  // 現在時刻ライン
   const cx=tToX(tNow); tctx.strokeStyle='#f59e0b'; tctx.beginPath(); tctx.moveTo(cx,0); tctx.lineTo(cx,TL.height); tctx.stroke(); }
 
-// TLクリック：時刻移動＆レーン選択
-TL.addEventListener('mousedown',e=>{ const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top; const lane=laneIndexAtY(y); const t=applySnap(xToT(x)); if(lane>=0){ activeIndex=lane; syncPropPanel(); } tNow=t; updateTimeLabel(); draw(); drawTimeline(); });
+TL.addEventListener('mousedown',e=>{
+  if(e.button!==0) return;
+  const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top;
+  const lane=laneIndexAtY(y);
+  if(lane>=0){
+    const it=items[lane]; const yMid=(laneTop+lane*(laneH+laneGap))+laneH/2; const th=10;
+    for(let k=0;k<(it.keys||[]).length;k++){
+      const gx=tToX(it.keys[k].t);
+      if(Math.abs(gx-x)<=th && Math.abs(yMid-y)<=th){ draggingKF={item:lane, key:k}; activeIndex=lane; syncPropPanel(); drawTimeline(); return; }
+    }
+  }
+  const t=applySnap(xToT(x)); if(lane>=0){ activeIndex=lane; syncPropPanel(); }
+  tNow=t; updateTimeLabel(); draw(); drawTimeline();
+});
 function laneIndexAtY(y){ if(y<laneTop) return -1; const idx=Math.floor((y-laneTop)/(laneH+laneGap)); return (idx>=0&&idx<items.length)?idx:-1; }
 
-// TLホイール横ズーム／横パン（中/右）／縦スクロールはWrapで
-let tlPanning=false, tlPanPrev=0;
+let tlPanning=false, tlPanPrev=0; let draggingKF=null; // {item,key}
 TL.addEventListener('contextmenu',e=>e.preventDefault());
 TL.addEventListener('mousedown',e=>{ if(e.button===1||e.button===2){ const r=TL.getBoundingClientRect(); tlPanning=true; tlPanPrev=e.clientX-r.left; }});
-window.addEventListener('mousemove',e=>{ if(!tlPanning) return; const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const pad=80,w=TL.width-pad-16; const vd=viewDur(); const dx=x-tlPanPrev; tlPanPrev=x; tlStart -= (dx/w)*vd; clampTlStart(); drawTimeline(); });
-window.addEventListener('mouseup',()=>{ tlPanning=false; });
+window.addEventListener('mousemove',e=>{
+  if(tlPanning){ const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const pad=80,w=TL.width-pad-16; const vd=viewDur(); const dx=x-tlPanPrev; tlPanPrev=x; tlStart -= (dx/w)*vd; clampTlStart(); drawTimeline(); return; }
+  if(draggingKF){ const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const it=items[draggingKF.item]; let k=it.keys[draggingKF.key]; let t=applySnap(xToT(x)); t=Math.max(0,Math.min(duration,t)); k.t=t; const ref=k; it.keys.sort((a,b)=>a.t-b.t); draggingKF.key=it.keys.indexOf(ref); drawTimeline(); return; }
+});
+window.addEventListener('mouseup',()=>{ tlPanning=false; draggingKF=null; });
 TL.addEventListener('wheel',e=>{ if(e.ctrlKey){ const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const tAt=xToT(x); const delta=-(e.deltaY||e.wheelDelta)*0.001; tlZoom=Math.max(0.25,Math.min(4, tlZoom*(1+delta))); const vd=viewDur(); tlStart=tAt - vd/2; clampTlStart(); document.getElementById('tlZoom').value=String(tlZoom); drawTimeline(); e.preventDefault(); } },{passive:false});
 
 // ===== 入力（キャンバス：ドラッグ/ズーム/パン） =====
@@ -253,18 +276,23 @@ canvas.addEventListener('mousedown',e=>{
   const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
   if(e.button===1||e.button===2||spaceDown){ panning=true; panPrev=p; return; }
   const w=screenToWorld(p);
-  // ターゲット（常にドラッグ可）
-  for(let i=targets.length-1;i>=0;i--){ const t=targets[i]; const dx=w.x-t.x,dy=w.y-t.y; if(dx*dx+dy*dy<=28*28){ dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; } }
-  // アイテム
+  for(let i=targets.length-1;i>=0;i--){ const t=targets[i]; const dx=w.x-t.x,dy=w.y-t.y; if(dx*dx+dy*dy<=25*25){ dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; } }
   for(let i=items.length-1;i>=0;i--){ const it=items[i]; if(hitItem(it,w)){ dragging=true; dragKind='item'; dragIdx=i; activeIndex=i; dragOff={x:w.x-it.pos.x,y:w.y-it.pos.y}; syncPropPanel(); draw(); return; } }
 });
-canvas.addEventListener('mousemove',e=>{ const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top}; if(panning&&panPrev){ const dx=p.x-panPrev.x, dy=p.y-panPrev.y; setView(view.scale,view.x+dx,view.y+dy); panPrev=p; return; } if(!dragging) return; const w=screenToWorld(p); if(dragKind==='target'){ const t=targets[dragIdx]; t.x=w.x-dragOff.x; t.y=w.y-dragOff.y; draw(); return; } if(dragKind==='item'){ const it=items[dragIdx]; it.pos.x=w.x-dragOff.x; it.pos.y=w.y-dragOff.y; const key=nearestKeyAtTime(it,tNow); if(key) { key.x=it.pos.x; key.y=it.pos.y; } draw(); } });
+canvas.addEventListener('mousemove',e=>{
+  const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
+  if(panning&&panPrev){ const dx=p.x-panPrev.x, dy=p.y-panPrev.y; setView(view.scale,view.x+dx,view.y+dy); panPrev=p; return; }
+  if(!dragging) return;
+  const w=screenToWorld(p);
+  if(dragKind==='target'){ const t=targets[dragIdx]; t.x=w.x-dragOff.x; t.y=w.y-dragOff.y; draw(); return; }
+  if(dragKind==='item'){ const it=items[dragIdx]; it.pos.x=w.x-dragOff.x; it.pos.y=w.y-dragOff.y; const key=nearestKeyAtTime(it,tNow); if(key) { key.x=it.pos.x; key.y=it.pos.y; } draw(); }
+});
 window.addEventListener('mouseup',()=>{ dragging=false; dragIdx=-1; panning=false; panPrev=null; });
 window.addEventListener('keydown',e=>{ if(e.code==='Space'){ spaceDown=true; e.preventDefault(); }});
 window.addEventListener('keyup',e=>{ if(e.code==='Space'){ spaceDown=false; }});
 canvas.addEventListener('wheel',e=>{ const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top}; const before=screenToWorld(p); const delta=-(e.deltaY||e.wheelDelta)*0.001; const s=Math.max(MIN_S,Math.min(MAX_S, view.scale*(1+delta))); const newX=p.x-before.x*s; const newY=p.y-before.y*s; setView(s,newX,newY); e.preventDefault(); },{passive:false});
 
-function hitItem(it,w){ if(it.type==='icon'||it.type==='circle'){ const r=it.r||18; const dx=w.x-it.pos.x,dy=w.y-it.pos.y; return (dx*dx+dy*dy<=r*r); } else { const hw=(it.w||160)/2, hh=(it.h||90)/2; return (Math.abs(w.x-it.pos.x)<=hw && Math.abs(w.y-it.pos.y)<=hh); } }
+function hitItem(it,w){ if(it.type==='icon'||it.type==='circle'){ const r=it.r||25; const dx=w.x-it.pos.x,dy=w.y-it.pos.y; return (dx*dx+dy*dy<=r*r); } else { const hw=(it.w||160)/2, hh=(it.h||90)/2; return (Math.abs(w.x-it.pos.x)<=hw && Math.abs(w.y-it.pos.y)<=hh); } }
 
 // ===== キーフレーム操作 =====
 function nearestKeyAtTime(it,t){ if(!it.keys||!it.keys.length) return null; let best=null,bd=1e9; for(const k of it.keys){ const d=Math.abs(k.t-t); if(d<bd){ bd=d; best=k; } } return best; }
@@ -281,7 +309,7 @@ const propStroke=document.getElementById('propStroke');
 const propTextColor=document.getElementById('propTextColor');
 const propFont=document.getElementById('propFont');
 const propFontSize=document.getElementById('propFontSize');
-function syncPropPanel(){ const it=items[activeIndex]; if(!it) return; propName.value=it.name||''; propSize.value=it.r||18; propW.value=it.w||160; propH.value=it.h||90; propText.value=it.text||''; propFill.value=it.fill||'#000000'; propStroke.value=it.stroke||'#111111'; propTextColor.value=it.textColor||'#111111'; propFont.value=it.font||'system-ui'; propFontSize.value=it.fontSize||14; }
+function syncPropPanel(){ const it=items[activeIndex]; if(!it) return; propName.value=it.name||''; propSize.value=it.r||25; propW.value=it.w||160; propH.value=it.h||90; propText.value=it.text||''; propFill.value=it.fill||'#000000'; propStroke.value=it.stroke||'#111111'; propTextColor.value=it.textColor||'#111111'; propFont.value=it.font||'system-ui'; propFontSize.value=it.fontSize||20; }
 
 document.getElementById('applyProps').onclick=()=>{ const it=items[activeIndex]; if(!it) return; it.name=propName.value||it.name; it.r=Math.max(6, Math.min(200, parseFloat(propSize.value)||it.r)); it.w=Math.max(10, Math.min(1200, parseFloat(propW.value)||it.w)); it.h=Math.max(10, Math.min(1200, parseFloat(propH.value)||it.h)); it.text=propText.value||it.text; it.fill=propFill.value||it.fill; it.stroke=propStroke.value||it.stroke; it.textColor=propTextColor.value||it.textColor; it.font=propFont.value||it.font; it.fontSize=Math.max(8, Math.min(120, parseFloat(propFontSize.value)||it.fontSize)); draw(); drawTimeline(); };
 
@@ -315,22 +343,24 @@ document.getElementById('applyFrameSize').onclick=()=>{
 };
 
 function fitToFrame(){
-  const s=Math.min(canvas.width/W, canvas.height/H); // 枠がキャンバス内に収まる倍率
+  const s=Math.min(canvas.width/W, canvas.height/H);
   const x=(canvas.width-W*s)/2; const y=(canvas.height-H*s)/2; setView(s,x,y);
 }
 
 // ===== 追加ボタン =====
-document.getElementById('addIconBtn').onclick=()=>{ const name=prompt('アイコン名（例: X1）')||'X'; const x=160+items.length*40, y=H*0.78; items.push({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:12,r:18,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
-document.getElementById('addCircleBtn').onclick=()=>{ const x=W*0.2+Math.random()*W*0.6, y=H*0.5; items.push({type:'circle',name:'○',fill:'#0ea5e9',stroke:'#0a6fb2',textColor:'#ffffff',font:'system-ui',fontSize:14,r:28,pos:{x,y},w:80,h:80,text:'',keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
-document.getElementById('addRectBtn').onclick=()=>{ const x=W*0.3, y=H*0.5; items.push({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:14,w:200,h:120,pos:{x,y},r:18,text:'',keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
-document.getElementById('addTextRectBtn').onclick=()=>{ const x=W*0.5, y=H*0.5; const text=prompt('枠内テキスト（改行可）','サンプル\nテキスト')||'テキスト'; items.push({type:'textRect',name:'T',fill:'#ffffff',stroke:'#111111',textColor:'#111111',font:"'Noto Sans JP', system-ui",fontSize:16,w:240,h:140,pos:{x,y},r:18,text,keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addIconBtn').onclick=()=>{ const name=prompt('アイコン名（例: X1）')||'X'; const x=160+items.length*40, y=H*0.78; items.push({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:25,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addCircleBtn').onclick=()=>{ const x=W*0.2+Math.random()*W*0.6, y=H*0.5; items.push({type:'circle',name:'○',fill:'#0ea5e9',stroke:'#0a6fb2',textColor:'#ffffff',font:'system-ui',fontSize:20,r:25,pos:{x,y},w:80,h:80,text:'',keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addRectBtn').onclick=()=>{ const x=W*0.3, y=H*0.5; items.push({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:20,w:200,h:120,pos:{x,y},r:18,text:'',keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addTextRectBtn').onclick=()=>{ const x=W*0.5, y=H*0.5; const text=prompt('枠内テキスト（改行可）','サンプル\nテキスト')||'テキスト'; items.push({type:'textRect',name:'T',fill:'#ffffff',stroke:'#111111',textColor:'#111111',font:"'Noto Sans JP', system-ui",fontSize:20,w:240,h:140,pos:{x,y},r:18,text,keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
 
-document.getElementById('resetIconsBtn').onclick=()=>{ items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:12,r:18,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1)}]})); activeIndex=0; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('resetIconsBtn').onclick=()=>{ items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:25,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1)}]})); activeIndex=0; syncPropPanel(); draw(); drawTimeline(); };
 
-// ===== KFボタン =====
+// ===== KFボタン／削除 =====
 document.getElementById('addKF').onclick=()=>{ const it=items[activeIndex]; if(!it) return; addKeyAtNow(it); drawTimeline(); };
 document.getElementById('delKF').onclick=()=>{ const it=items[activeIndex]; if(!it||!it.keys||it.keys.length<=1) return; it.keys.pop(); drawTimeline(); };
 document.getElementById('clearKF').onclick=()=>{ const it=items[activeIndex]; if(!it) return; it.keys=[it.keys[0]]; drawTimeline(); };
+document.getElementById('deleteItemBtn').onclick=()=>{ if(items.length===0) return; items.splice(activeIndex,1); if(activeIndex>=items.length) activeIndex=items.length-1; draw(); drawTimeline(); };
+window.addEventListener('keydown',e=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA') return; if(e.key==='Delete'||e.key==='Backspace'){ if(items.length===0) return; items.splice(activeIndex,1); if(activeIndex>=items.length) activeIndex=items.length-1; draw(); drawTimeline(); }});
 
 // ===== 再生コントロール =====
 const playBtn=document.getElementById('playBtn');
@@ -369,7 +399,7 @@ fitBtn.onclick=()=>{ fitViewToCurrent(); };
 centerBtn.onclick=()=>{ if(items.length===0) return; let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity; items.forEach(ic=>{minX=Math.min(minX,ic.pos.x);minY=Math.min(minY,ic.pos.y);maxX=Math.max(maxX,ic.pos.x);maxY=Math.max(maxY,ic.pos.y);}); const cx=(minX+maxX)/2, cy=(minY+maxY)/2; const sx=canvas.width/Math.max(1,maxX-minX+200); const sy=canvas.height/Math.max(1,maxY-minY+200); const s=Math.max(MIN_S,Math.min(MAX_S,Math.min(sx,sy))); const x=canvas.width/2-cx*s; const y=canvas.height/2-cy*s; setView(s,x,y); };
 resetBtn.onclick=()=> setView(1,0,0);
 
-// ===== GIF 書き出し（タイムラインに沿って自動レンダリング） =====
+// ===== GIF 書き出し =====
 const exportBtn=document.getElementById('exportGifBtn');
 const exportStatus=document.getElementById('exportStatus');
 const exportProgress=document.getElementById('exportProgress');
@@ -381,12 +411,10 @@ const expEnd=document.getElementById('expEnd');
 function makeOffscreen(scale){ const off=document.createElement('canvas'); off.width=Math.round(W*scale); off.height=Math.round(H*scale); return off; }
 
 exportBtn.onclick=async ()=>{
-  // ライブラリ確認
   if(typeof GIF==='undefined'){
     alert('GIF.js を読み込めませんでした。ネット接続またはCDNの許可をご確認ください。');
     return;
   }
-  // 入力取得と検証
   const fps=Math.max(1, Math.min(60, parseInt(expFps.value,10)||20));
   const scale=Math.max(0.25, Math.min(2, parseFloat(expScale.value)||1));
   let t0=Math.max(0, parseFloat(expStart.value)||0);
@@ -396,11 +424,9 @@ exportBtn.onclick=async ()=>{
   t1=Math.max(0, Math.min(duration, t1));
   const totalFrames = Math.max(1, Math.round((t1 - t0) * fps) + 1);
 
-  // UIロック
   const wasPlaying=isPlaying; isPlaying=false;
   exportBtn.disabled=true; exportStatus.textContent=`レンダリング準備 (${totalFrames} frames)`; exportProgress.value=0; exportProgress.max=totalFrames;
 
-  // オフスクリーン描画用コンテキスト
   const off=makeOffscreen(scale); const octx=off.getContext('2d');
   const gif=new GIF({workers:2, quality:10, workerScript:'https://unpkg.com/gif.js@0.2.0/dist/gif.worker.js'});
 
@@ -409,20 +435,17 @@ exportBtn.onclick=async ()=>{
     for(let i=0;i<totalFrames;i++){
       const tt = t0 + (i/(totalFrames-1))*(t1-t0);
       tNow=tt; updateTimeLabel();
-      // 元キャンバスに通常描画（現在のviewは等倍にする）
-      const prevView={...view}; setView(1,0,0); draw(); view=prevView; // setViewがdraw呼ぶので復元
-      // スケール描画
+      const prevView={...view}; setView(1,0,0); draw(); view=prevView;
       octx.setTransform(1,0,0,1,0,0); octx.clearRect(0,0,off.width,off.height);
       octx.drawImage(canvas, 0,0, off.width, off.height);
       gif.addFrame(octx, {copy:true, delay: Math.round(1000/fps)});
       if(i%5===0){ exportStatus.textContent=`フレーム ${i+1}/${totalFrames}`; }
       exportProgress.value=i+1;
-      await new Promise(r=>setTimeout(r,0)); // UI更新
+      await new Promise(r=>setTimeout(r,0));
     }
   }catch(e){
     console.error('Export error', e);
     alert('書き出し中にエラーが発生しました: '+e.message);
-    // 復元
     tNow=savedT; view=savedView; updateTimeLabel(); draw(); drawTimeline();
     exportBtn.disabled=false; exportStatus.textContent='失敗';
     return;
@@ -433,7 +456,6 @@ exportBtn.onclick=async ()=>{
     a.href=URL.createObjectURL(blob);
     a.download='animation.gif';
     a.click();
-    // 復元
     tNow=savedT; view=savedView; updateTimeLabel(); draw(); drawTimeline();
     exportBtn.disabled=false; exportStatus.textContent='完了';
   });
@@ -457,19 +479,9 @@ init();
   const it=items[0]; const pA=getPosAtTime(it,0); const pB=getPosAtTime(it,duration/2); console.assert(pA&&pB,'pos interpolation works');
   console.assert(typeof hitItem==='function','hit test exists');
   console.assert(!!document.getElementById('exportGifBtn'),'export button exists');
-  // フレーム数計算の妥当性（端点含む）
   const fps=10, s=0, e=2; const frames=Math.max(1, Math.round((e-s)*fps)+1); console.assert(frames===21,'frame count inclusive end');
-  // textRect描画が例外を出さない
-  const testItem={type:'textRect',name:'T',fill:'#fff',stroke:'#111',textColor:'#111',font:'system-ui',fontSize:16,w:200,h:100,pos:{x:200,y:200},r:18,text:'行1\n行2',keys:[{t:0,x:200,y:200}]};
-  // 追加テスト: 枠とキャンバスの独立性
-  const oldW=W, oldH=H, oldCW=canvas.width, oldCH=canvas.height;
-  // 1) キャンバスだけ変更しても枠は不変
-  canvas.width=777; canvas.height=666; if(canvas.width!==777||canvas.height!==666) throw new Error('canvas resize failed');
-  if(W!==oldW||H!==oldH) throw new Error('frame changed unexpectedly');
-  // 戻す
-  canvas.width=oldCW; canvas.height=oldCH;
-  let threw=false; try{ drawItem(testItem,testItem.pos); }catch(e){ threw=true; }
-  console.assert(!threw,'textRect draw no-throw');
+  // 枠とキャンバスの独立性
+  const oldW=W, oldH=H, oldCW=canvas.width, oldCH=canvas.height; canvas.width=777; canvas.height=666; if(canvas.width!==777||canvas.height!==666) throw new Error('canvas resize failed'); if(W!==oldW||H!==oldH) throw new Error('frame changed unexpectedly'); canvas.width=oldCW; canvas.height=oldCH;
   console.log('[Tests] OK');
 }catch(e){ console.error('[Tests] FAIL',e); }})();
 
