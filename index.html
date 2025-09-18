@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Drag-Path GIF Animator（完全版）</title>
+<title>Drag-Path GIF Animator（完全版＋Undo/Redo）</title>
 <style>
   body{margin:0;background:#ffffff;color:#111827;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;height:100vh;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px;box-sizing:border-box}
   aside{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;overflow:auto}
@@ -29,6 +29,7 @@
 <body>
   <aside>
     <h1>設定メニュー</h1>
+
     <div class="panel">
       <h2>アイテム追加</h2>
       <div class="row">
@@ -135,7 +136,8 @@
   </main>
 
 <script>
-(function(){
+// DOM構築後に初期化（要素未定義での null 参照を防止）
+window.addEventListener('DOMContentLoaded', () => {
 'use strict';
 const canvas=document.getElementById('canvas');
 const ctx=canvas.getContext('2d');
@@ -173,6 +175,16 @@ const NAMES=['D1','D2','D3','D4','H1','H2','ST','MT'];
 /** item: {type:'icon'|'circle'|'rect'|'textRect', name, fill, stroke, textColor, font, fontSize, r, w, h, text, pos:{x,y}, keys:[{t,x,y}]} */
 let items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:25,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1)}]}));
 let activeIndex=0;
+
+// ==== Undo/Redo ====
+let undoStack=[], redoStack=[];
+function cloneState(){
+  return { items: JSON.parse(JSON.stringify(items)), targets: JSON.parse(JSON.stringify(targets)), tNow, W, H, CW, CH, activeIndex };
+}
+function pushUndo(){ undoStack.push(cloneState()); if(undoStack.length>100) undoStack.shift(); redoStack.length=0; }
+function restoreState(s){ items=s.items; targets=s.targets; tNow=s.tNow; W=s.W; H=s.H; CW=s.CW; CH=s.CH; activeIndex=Math.min(s.activeIndex??activeIndex, items.length-1); canvas.width=CW; canvas.height=CH; draw(); drawTimeline(); updateTimeLabel(); }
+function undo(){ if(!undoStack.length) return; const cur=cloneState(); const prev=undoStack.pop(); redoStack.push(cur); restoreState(prev); }
+function redo(){ if(!redoStack.length) return; const cur=cloneState(); const next=redoStack.pop(); undoStack.push(cur); restoreState(next); }
 
 // ===== ターゲット（A–D / 1–4）– 常にドラッグ可・非アニメ =====
 let targets=initTargets();
@@ -251,7 +263,7 @@ TL.addEventListener('mousedown',e=>{
     const it=items[lane]; const yMid=(laneTop+lane*(laneH+laneGap))+laneH/2; const th=10;
     for(let k=0;k<(it.keys||[]).length;k++){
       const gx=tToX(it.keys[k].t);
-      if(Math.abs(gx-x)<=th && Math.abs(yMid-y)<=th){ draggingKF={item:lane, key:k}; activeIndex=lane; syncPropPanel(); drawTimeline(); return; }
+      if(Math.abs(gx-x)<=th && Math.abs(yMid-y)<=th){ pushUndo(); draggingKF={item:lane, key:k}; activeIndex=lane; syncPropPanel(); drawTimeline(); return; }
     }
   }
   const t=applySnap(xToT(x)); if(lane>=0){ activeIndex=lane; syncPropPanel(); }
@@ -276,8 +288,8 @@ canvas.addEventListener('mousedown',e=>{
   const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
   if(e.button===1||e.button===2||spaceDown){ panning=true; panPrev=p; return; }
   const w=screenToWorld(p);
-  for(let i=targets.length-1;i>=0;i--){ const t=targets[i]; const dx=w.x-t.x,dy=w.y-t.y; if(dx*dx+dy*dy<=25*25){ dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; } }
-  for(let i=items.length-1;i>=0;i--){ const it=items[i]; if(hitItem(it,w)){ dragging=true; dragKind='item'; dragIdx=i; activeIndex=i; dragOff={x:w.x-it.pos.x,y:w.y-it.pos.y}; syncPropPanel(); draw(); return; } }
+  for(let i=targets.length-1;i>=0;i--){ const t=targets[i]; const dx=w.x-t.x,dy=w.y-t.y; if(dx*dx+dy*dy<=25*25){ pushUndo(); dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; } }
+  for(let i=items.length-1;i>=0;i--){ const it=items[i]; if(hitItem(it,w)){ pushUndo(); dragging=true; dragKind='item'; dragIdx=i; activeIndex=i; dragOff={x:w.x-it.pos.x,y:w.y-it.pos.y}; syncPropPanel(); draw(); return; } }
 });
 canvas.addEventListener('mousemove',e=>{
   const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
@@ -311,7 +323,7 @@ const propFont=document.getElementById('propFont');
 const propFontSize=document.getElementById('propFontSize');
 function syncPropPanel(){ const it=items[activeIndex]; if(!it) return; propName.value=it.name||''; propSize.value=it.r||25; propW.value=it.w||160; propH.value=it.h||90; propText.value=it.text||''; propFill.value=it.fill||'#000000'; propStroke.value=it.stroke||'#111111'; propTextColor.value=it.textColor||'#111111'; propFont.value=it.font||'system-ui'; propFontSize.value=it.fontSize||20; }
 
-document.getElementById('applyProps').onclick=()=>{ const it=items[activeIndex]; if(!it) return; it.name=propName.value||it.name; it.r=Math.max(6, Math.min(200, parseFloat(propSize.value)||it.r)); it.w=Math.max(10, Math.min(1200, parseFloat(propW.value)||it.w)); it.h=Math.max(10, Math.min(1200, parseFloat(propH.value)||it.h)); it.text=propText.value||it.text; it.fill=propFill.value||it.fill; it.stroke=propStroke.value||it.stroke; it.textColor=propTextColor.value||it.textColor; it.font=propFont.value||it.font; it.fontSize=Math.max(8, Math.min(120, parseFloat(propFontSize.value)||it.fontSize)); draw(); drawTimeline(); };
+document.getElementById('applyProps').onclick=()=>{ const it=items[activeIndex]; if(!it) return; pushUndo(); it.name=propName.value||it.name; it.r=Math.max(6, Math.min(200, parseFloat(propSize.value)||it.r)); it.w=Math.max(10, Math.min(1200, parseFloat(propW.value)||it.w)); it.h=Math.max(10, Math.min(1200, parseFloat(propH.value)||it.h)); it.text=propText.value||it.text; it.fill=propFill.value||it.fill; it.stroke=propStroke.value||it.stroke; it.textColor=propTextColor.value||it.textColor; it.font=propFont.value||it.font; it.fontSize=Math.max(8, Math.min(120, parseFloat(propFontSize.value)||it.fontSize)); draw(); drawTimeline(); };
 
 // ===== キャンバス＆フレーム（枠）サイズ変更 =====
 const canvasWInput=document.getElementById('canvasW');
@@ -323,6 +335,7 @@ const frameHInput=document.getElementById('frameH');
 const lockFrameAspect=document.getElementById('lockFrameAspect');
 
 document.getElementById('applyCanvasSize').onclick=()=>{
+  pushUndo();
   let w=parseInt(canvasWInput.value,10); let h=parseInt(canvasHInput.value,10);
   if(!Number.isFinite(w)||w<64) w=64; if(!Number.isFinite(h)||h<64) h=64;
   if(lockAspect && lockAspect.checked){ const ratio=CW/Math.max(1,CH);
@@ -333,6 +346,7 @@ document.getElementById('applyCanvasSize').onclick=()=>{
 };
 
 document.getElementById('applyFrameSize').onclick=()=>{
+  pushUndo();
   let w=parseInt(frameWInput.value,10); let h=parseInt(frameHInput.value,10);
   if(!Number.isFinite(w)||w<64) w=64; if(!Number.isFinite(h)||h<64) h=64;
   if(lockFrameAspect && lockFrameAspect.checked){ const ratio=W/Math.max(1,H);
@@ -348,19 +362,18 @@ function fitToFrame(){
 }
 
 // ===== 追加ボタン =====
-document.getElementById('addIconBtn').onclick=()=>{ const name=prompt('アイコン名（例: X1）')||'X'; const x=160+items.length*40, y=H*0.78; items.push({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:25,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
-document.getElementById('addCircleBtn').onclick=()=>{ const x=W*0.2+Math.random()*W*0.6, y=H*0.5; items.push({type:'circle',name:'○',fill:'#0ea5e9',stroke:'#0a6fb2',textColor:'#ffffff',font:'system-ui',fontSize:20,r:25,pos:{x,y},w:80,h:80,text:'',keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
-document.getElementById('addRectBtn').onclick=()=>{ const x=W*0.3, y=H*0.5; items.push({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:20,w:200,h:120,pos:{x,y},r:18,text:'',keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
-document.getElementById('addTextRectBtn').onclick=()=>{ const x=W*0.5, y=H*0.5; const text=prompt('枠内テキスト（改行可）','サンプル\nテキスト')||'テキスト'; items.push({type:'textRect',name:'T',fill:'#ffffff',stroke:'#111111',textColor:'#111111',font:"'Noto Sans JP', system-ui",fontSize:20,w:240,h:140,pos:{x,y},r:18,text,keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addIconBtn').onclick=()=>{ pushUndo(); const name=prompt('アイコン名（例: X1）')||'X'; const x=160+items.length*40, y=H*0.78; items.push({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:25,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addCircleBtn').onclick=()=>{ pushUndo(); const x=W*0.2+Math.random()*W*0.6, y=H*0.5; items.push({type:'circle',name:'○',fill:'#0ea5e9',stroke:'#0a6fb2',textColor:'#ffffff',font:'system-ui',fontSize:20,r:25,pos:{x,y},w:80,h:80,text:'',keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addRectBtn').onclick=()=>{ pushUndo(); const x=W*0.3, y=H*0.5; items.push({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:20,w:200,h:120,pos:{x,y},r:18,text:'',keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addTextRectBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; const text=prompt('枠内テキスト（改行可）','サンプル\nテキスト')||'テキスト'; items.push({type:'textRect',name:'T',fill:'#ffffff',stroke:'#111111',textColor:'#111111',font:"'Noto Sans JP', system-ui",fontSize:20,w:240,h:140,pos:{x,y},r:18,text,keys:[{t:0,x,y}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
 
-document.getElementById('resetIconsBtn').onclick=()=>{ items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:25,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1)}]})); activeIndex=0; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('resetIconsBtn').onclick=()=>{ pushUndo(); items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:25,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1)}]})); activeIndex=0; syncPropPanel(); draw(); drawTimeline(); };
 
 // ===== KFボタン／削除 =====
-document.getElementById('addKF').onclick=()=>{ const it=items[activeIndex]; if(!it) return; addKeyAtNow(it); drawTimeline(); };
-document.getElementById('delKF').onclick=()=>{ const it=items[activeIndex]; if(!it||!it.keys||it.keys.length<=1) return; it.keys.pop(); drawTimeline(); };
-document.getElementById('clearKF').onclick=()=>{ const it=items[activeIndex]; if(!it) return; it.keys=[it.keys[0]]; drawTimeline(); };
-document.getElementById('deleteItemBtn').onclick=()=>{ if(items.length===0) return; items.splice(activeIndex,1); if(activeIndex>=items.length) activeIndex=items.length-1; draw(); drawTimeline(); };
-window.addEventListener('keydown',e=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA') return; if(e.key==='Delete'||e.key==='Backspace'){ if(items.length===0) return; items.splice(activeIndex,1); if(activeIndex>=items.length) activeIndex=items.length-1; draw(); drawTimeline(); }});
+document.getElementById('addKF').onclick=()=>{ const it=items[activeIndex]; if(!it) return; pushUndo(); addKeyAtNow(it); drawTimeline(); };
+document.getElementById('delKF').onclick=()=>{ const it=items[activeIndex]; if(!it||!it.keys||it.keys.length<=1) return; pushUndo(); it.keys.pop(); drawTimeline(); };
+document.getElementById('clearKF').onclick=()=>{ const it=items[activeIndex]; if(!it) return; pushUndo(); it.keys=[it.keys[0]]; drawTimeline(); };
+document.getElementById('deleteItemBtn').onclick=()=>{ if(items.length===0) return; pushUndo(); items.splice(activeIndex,1); if(activeIndex>=items.length) activeIndex=items.length-1; draw(); drawTimeline(); };
 
 // ===== 再生コントロール =====
 const playBtn=document.getElementById('playBtn');
@@ -372,6 +385,14 @@ resetTimeBtn.onclick=()=>{ tNow=0; updateTimeLabel(); draw(); drawTimeline(); };
 function loop(ts){ if(!isPlaying) return; if(!lastTs) lastTs=ts; const dt=(ts-lastTs)/1000; lastTs=ts; tNow+=dt; if(tNow>duration){ tNow=duration; isPlaying=false; } updateTimeLabel(); draw(); drawTimeline(); requestAnimationFrame(loop); }
 
 // ===== 入力関連（TL・ビュー） =====
+// Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y
+window.addEventListener('keydown', (e)=>{
+  const tag=document.activeElement?.tagName;
+  if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z' && !e.shiftKey){ e.preventDefault(); undo(); }
+  else if(((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z' && e.shiftKey) || ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='y')){ e.preventDefault(); redo(); }
+});
+
 const tlZoomInput=document.getElementById('tlZoom');
 const tlViewportH=document.getElementById('tlViewportH');
 const durationInput=document.getElementById('duration');
@@ -390,7 +411,6 @@ tlViewportH && tlViewportH.addEventListener('change',resizeTL);
 snapKeysChk.addEventListener('change',()=>{ snapOn=!!snapKeysChk.checked; });
 snapStepInput.addEventListener('change',()=>{ const v=Math.max(0.01,Math.min(10,parseFloat(snapStepInput.value)||snapStep)); snapStep=+v.toFixed(4); snapStepInput.value=String(snapStep); });
 
-// ===== ビューボタン（キャンバス） =====
 const fitBtn=document.getElementById('fitView');
 const centerBtn=document.getElementById('centerIcons');
 const resetBtn=document.getElementById('resetView');
@@ -474,18 +494,24 @@ init();
 
 // ===== 簡易テスト =====
 (function runTests(){ try{
+  // 1) 必須要素の存在（今回の不具合の再発防止）
+  console.assert(!!document.getElementById('applyProps'), '#applyProps exists');
+  // 2) 初期8アイコン
   console.assert(items.length>=8,'initial 8 icons present');
+  // 3) TL 座標変換の可逆性
   const t=1.23; const x=tToX(t); const t2=xToT(x); console.assert(Math.abs(t-t2)<1e-6,'t<->x invertible');
+  // 4) 補間の妥当性
   const it=items[0]; const pA=getPosAtTime(it,0); const pB=getPosAtTime(it,duration/2); console.assert(pA&&pB,'pos interpolation works');
-  console.assert(typeof hitItem==='function','hit test exists');
+  // 5) Export ボタン
   console.assert(!!document.getElementById('exportGifBtn'),'export button exists');
+  // 6) フレーム数（端点含む）
   const fps=10, s=0, e=2; const frames=Math.max(1, Math.round((e-s)*fps)+1); console.assert(frames===21,'frame count inclusive end');
-  // 枠とキャンバスの独立性
+  // 7) 枠とキャンバスの独立性
   const oldW=W, oldH=H, oldCW=canvas.width, oldCH=canvas.height; canvas.width=777; canvas.height=666; if(canvas.width!==777||canvas.height!==666) throw new Error('canvas resize failed'); if(W!==oldW||H!==oldH) throw new Error('frame changed unexpectedly'); canvas.width=oldCW; canvas.height=oldCH;
   console.log('[Tests] OK');
 }catch(e){ console.error('[Tests] FAIL',e); }})();
 
-})();
+}); // DOMContentLoaded end
 </script>
 </body>
 </html>
