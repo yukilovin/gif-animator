@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Drag-Path GIF Animator（回転KF対応／塗りなし／前後順序／△／ターゲット形状＆サイズ／透明度／円サイズ=黒枠まで）</title>
+<title>Drag-Path GIF Animator（回転KF／コピー&ペースト／座標スナップ）</title>
 <style>
   body{margin:0;background:#ffffff;color:#111827;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;height:100vh;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px;box-sizing:border-box}
   aside{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;overflow:auto}
@@ -41,13 +41,27 @@
         <button class="btn" id="resetIconsBtn">↺ 初期8アイコン</button>
         <button class="btn" id="deleteItemBtn">🗑 選択削除</button>
       </div>
+      <div class="row"><span class="muted">コピー：Ctrl+C ／ ペースト：Ctrl+V</span></div>
     </div>
 
     <div class="panel">
       <h2>選択アイテム属性</h2>
       <div class="row"><label>名称 <input id="propName" type="text"></label></div>
-      <div class="row"><label>サイズ/半径 <input id="propSize" type="number" value="40" min="1" max="540"></label><span class="muted">○は半径、□/△は外接半径</span></div>
-      <div class="row"><label>幅 <input id="propW" type="number" value="160" min="10" max="4096"></label><label>高 <input id="propH" type="number" value="90" min="10" max="4096"></label></div>
+
+      <div class="row">
+        <label>X <input id="propX" type="number" value="0" step="1"></label>
+        <label>Y <input id="propY" type="number" value="0" step="1"></label>
+        <span class="muted">（現在時刻の位置。入力→適用でKFに反映）</span>
+      </div>
+
+      <div class="row">
+        <label>サイズ/半径 <input id="propSize" type="number" value="40" min="1" max="540"></label>
+        <span class="muted">○は半径、□/△は外接半径</span>
+      </div>
+      <div class="row">
+        <label>幅 <input id="propW" type="number" value="160" min="10" max="4096"></label>
+        <label>高 <input id="propH" type="number" value="90" min="10" max="4096"></label>
+      </div>
       <div class="row"><label>透明度 <input id="propAlpha" type="number" value="1" min="0.1" max="1" step="0.05"></label></div>
       <div class="row"><label>テキスト <input id="propText" type="text" placeholder="テキスト"></label></div>
       <div class="row">
@@ -66,7 +80,6 @@
         </select></label>
         <label>文字サイズ <input id="propFontSize" type="number" value="20" min="8" max="240"></label>
       </div>
-      <!-- 回転入力 -->
       <div class="row">
         <label>回転(°) <input id="propRotation" type="number" value="0" min="0" max="360"></label>
       </div>
@@ -85,8 +98,23 @@
 
     <div class="panel">
       <h2>キーフレーム</h2>
-      <div class="row"><button class="btn" id="addKF">＋ KF追加（現在時刻）</button><button class="btn" id="delKF">－ KF削除（最後）</button><button class="btn" id="clearKF">⌫ 全KF削除</button></div>
-      <div class="row"><label><input type="checkbox" id="snapKeys" checked> スナップ</label><span class="pill">間隔 <input type="number" id="snapStep" value="0.10" step="0.01" style="width:60px">s</span></div>
+      <div class="row">
+        <button class="btn" id="addKF">＋ KF追加（現在時刻）</button>
+        <button class="btn" id="delKF">－ KF削除（最後）</button>
+        <button class="btn" id="clearKF">⌫ 全KF削除</button>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="snapKeys" checked> TLスナップ</label>
+        <span class="pill">間隔 <input type="number" id="snapStep" value="0.10" step="0.01" style="width:60px">s</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>座標スナップ（ドラッグ/適用）</h2>
+      <div class="row">
+        <label><input type="checkbox" id="posSnapOn" checked> 座標スナップON</label>
+        <label>グリッド(px) <input type="number" id="posSnapGrid" value="10" min="1" max="512"></label>
+      </div>
     </div>
 
     <div class="panel">
@@ -142,6 +170,7 @@
   <main>
     <h1>GIF Animator</h1>
     <canvas id="canvas" width="1080" height="1080"></canvas>
+    <div class="muted" id="coordReadout" style="margin-top:6px">X: 0, Y: 0</div>
     <div id="timelineWrap">
       <div class="timeline-header">
         <span>▼ タイムライン ▼</span>
@@ -160,6 +189,7 @@ const TL=document.getElementById('timeline');
 const tctx=TL.getContext('2d');
 const timelineWrap=document.getElementById('timelineWrap');
 const timeLabel=document.getElementById('timeLabel');
+const coordReadout=document.getElementById('coordReadout');
 let W=1080,H=1080; // 枠＝GIF解像度（黒枠）
 let CW=canvas.width, CH=canvas.height; // 作業キャンバス
 
@@ -180,8 +210,12 @@ function tToX(t){ const pad=80,w=TL.width-pad-16; const vd=viewDur(); return pad
 function xToT(x){ const pad=80,w=TL.width-pad-16; const vd=viewDur(); return tlStart + ((x-pad)/w)*vd; }
 function ensureTimelineCanvasHeight(){ const need=laneTop + items.length*(laneH+laneGap) + 24; if(TL.height!==need){ TL.height=need; } }
 
-// ====== スナップ ======
-let snapOn=true, snapStep=0.10; function applySnap(t){ if(!snapOn) return Math.max(0,Math.min(duration,t)); const s=Math.round(t/Math.max(0.01,snapStep))*Math.max(0.01,snapStep); return Math.max(0,Math.min(duration,+s.toFixed(6))); }
+// ====== スナップ（時間・座標） ======
+let snapOn=true, snapStep=0.10;
+let posSnap=true, posGrid=10;
+function applySnap(t){ if(!snapOn) return clamp01(t,0,duration); const s=Math.round(t/Math.max(0.01,snapStep))*Math.max(0.01,snapStep); return clamp01(+s.toFixed(6),0,duration); }
+function snapCoord(v){ return posSnap ? Math.round(v/posGrid)*posGrid : v; }
+function clamp01(v,min,max){ return Math.max(min,Math.min(max,v)); }
 
 // ====== アイテム（初期8＋追加） ======
 const COLORS={D1:'#1d4ed8',D2:'#16a34a',D3:'#059669',D4:'#0ea5e9',H1:'#d97706',H2:'#dc2626',ST:'#7c3aed',MT:'#4f46e5'};
@@ -192,9 +226,9 @@ let activeIndex=0;
 
 // ==== Undo/Redo ====
 let undoStack=[], redoStack=[];
-function cloneState(){ return { items: JSON.parse(JSON.stringify(items)), targets: JSON.parse(JSON.stringify(targets)), tNow, W, H, CW, CH, activeIndex }; }
+function cloneState(){ return { items: JSON.parse(JSON.stringify(items)), targets: JSON.parse(JSON.stringify(targets)), tNow, W, H, CW, CH, activeIndex, posSnap, posGrid }; }
 function pushUndo(){ undoStack.push(cloneState()); if(undoStack.length>100) undoStack.shift(); redoStack.length=0; }
-function restoreState(s){ items=s.items; targets=s.targets; tNow=s.tNow; W=s.W; H=s.H; CW=s.CW; CH=s.CH; activeIndex=Math.min(s.activeIndex??activeIndex, items.length-1); canvas.width=CW; canvas.height=CH; draw(); drawTimeline(); updateTimeLabel(); syncPropPanel(); }
+function restoreState(s){ items=s.items; targets=s.targets; tNow=s.tNow; W=s.W; H=s.H; CW=s.CW; CH=s.CH; activeIndex=Math.min(s.activeIndex??activeIndex, items.length-1); posSnap=s.posSnap; posGrid=s.posGrid; canvas.width=CW; canvas.height=CH; draw(); drawTimeline(); updateTimeLabel(); syncPropPanel(); }
 function undo(){ if(!undoStack.length) return; const cur=cloneState(); const prev=undoStack.pop(); redoStack.push(cur); restoreState(prev); }
 function redo(){ if(!redoStack.length) return; const cur=cloneState(); const next=redoStack.pop(); undoStack.push(cur); restoreState(next); }
 
@@ -288,7 +322,7 @@ function drawItem(it, pos){
     lines.forEach((ln,i)=> ctx.fillText(ln, pos.x, pos.y+(i-(lines.length-1)/2)*(Math.max(8,(it.fontSize||20))*1.2*s)));
   }
 
-  // 選択表示（回転後でもわかりやすく中心に）
+  // 選択表示
   if(items[activeIndex]===it){
     ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3*s;
     if(it.type==='rect'||it.type==='textRect'){
@@ -317,6 +351,8 @@ function draw(){
     it.pos.x=st.x; it.pos.y=st.y; it.rotation=st.rot;
     drawItem(it, st);
   });
+  // 座標リードアウト
+  const it=items[activeIndex]; if(it){ const st=getStateAtTime(it,tNow); coordReadout.textContent=`X: ${st.x|0}, Y: ${st.y|0}`; }
 }
 
 // ====== タイムライン描画/入力 ======
@@ -398,7 +434,7 @@ TL.addEventListener('wheel',e=>{
   }
 },{passive:false});
 
-// ====== キャンバス入力 ======
+// ====== キャンバス入力（ドラッグ／スナップ） ======
 let dragging=false, dragKind='item', dragIdx=-1, dragOff={x:0,y:0};
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('mousedown',e=>{
@@ -425,10 +461,10 @@ canvas.addEventListener('mousemove',e=>{
   if(!dragging) return;
   const w=screenToWorld(p);
   if(dragKind==='target'){
-    const t=targets[dragIdx]; t.x=w.x-dragOff.x; t.y=w.y-dragOff.y; draw(); return;
+    const t=targets[dragIdx]; t.x=snapCoord(w.x-dragOff.x); t.y=snapCoord(w.y-dragOff.y); draw(); return;
   }
   if(dragKind==='item'){
-    const it=items[dragIdx]; it.pos.x=w.x-dragOff.x; it.pos.y=w.y-dragOff.y;
+    const it=items[dragIdx]; it.pos.x=snapCoord(w.x-dragOff.x); it.pos.y=snapCoord(w.y-dragOff.y);
     const key=nearestKeyAtTime(it,tNow); if(key){ key.x=it.pos.x; key.y=it.pos.y; }
     draw();
   }
@@ -464,6 +500,8 @@ function addKeyAtNow(it){
 
 // ====== プロパティパネル ======
 const propName=document.getElementById('propName');
+const propX=document.getElementById('propX');
+const propY=document.getElementById('propY');
 const propSize=document.getElementById('propSize');
 const propW=document.getElementById('propW');
 const propH=document.getElementById('propH');
@@ -476,21 +514,42 @@ const propTextColor=document.getElementById('propTextColor');
 const propFont=document.getElementById('propFont');
 const propFontSize=document.getElementById('propFontSize');
 const propRotation=document.getElementById('propRotation');
+const posSnapOn=document.getElementById('posSnapOn');
+const posSnapGrid=document.getElementById('posSnapGrid');
 
 function updateSizeMax(){ propSize.max = Math.floor(Math.min(W,H)/2); }
 function syncPropPanel(){
   const it=items[activeIndex]; if(!it) return; updateSizeMax();
-  propName.value=it.name||''; propSize.value=it.r||40; propW.value=it.w||160; propH.value=it.h||90;
+  const st=getStateAtTime(it,tNow);
+  propName.value=it.name||'';
+  propX.value = Math.round(st.x);
+  propY.value = Math.round(st.y);
+  propSize.value=it.r||40; propW.value=it.w||160; propH.value=it.h||90;
   propAlpha.value=(it.alpha==null?1:it.alpha); propText.value=it.text||'';
   propFill.value=(it.fill!=null?it.fill:'#000000'); noFill.checked=(it.fill==null);
   propStroke.value=it.stroke||'#111111'; propTextColor.value=it.textColor||'#111111';
   propFont.value=it.font||'system-ui'; propFontSize.value=it.fontSize||20;
-  const stNow=getStateAtTime(it,tNow); propRotation.value=stNow.rot ?? (it.rotation||0);
+  propRotation.value=st.rot ?? (it.rotation||0);
+  posSnapOn.checked = !!posSnap;
+  posSnapGrid.value = posGrid;
 }
 
 document.getElementById('applyProps').onclick=()=>{
   const it=items[activeIndex]; if(!it) return; pushUndo();
   const maxR=Math.min(W,H)/2;
+
+  // 位置は現在時刻のキーに反映（無ければ作成）
+  const nx = snapCoord(parseFloat(propX.value)||it.pos.x);
+  const ny = snapCoord(parseFloat(propY.value)||it.pos.y);
+  let k = nearestKeyAtTime(it,tNow);
+  if(!k || Math.abs(k.t - tNow) > 1/120){
+    // 現在時刻に新規キー
+    const st=getStateAtTime(it,tNow);
+    k = {t:tNow,x:st.x,y:st.y,rot:st.rot};
+    it.keys.push(k); it.keys.sort((a,b)=>a.t-b.t);
+  }
+  k.x = nx; k.y = ny;
+
   it.name=propName.value||it.name;
   it.r=Math.max(1, Math.min(maxR, parseFloat(propSize.value)||it.r));
   it.w=Math.max(10, Math.min(4096, parseFloat(propW.value)||it.w));
@@ -503,10 +562,15 @@ document.getElementById('applyProps').onclick=()=>{
   it.font=propFont.value||it.font;
   it.fontSize=Math.max(8, Math.min(240, parseFloat(propFontSize.value)||it.fontSize));
   it.rotation = parseFloat(propRotation.value)||0;
-  // 現在のキーがあれば回転も更新
-  const eps=1/120; const i=it.keys.findIndex(k=>Math.abs(k.t - tNow) < eps);
-  if(i>=0) it.keys[i].rot = it.rotation;
-  draw(); drawTimeline();
+
+  // 回転も現在キーに反映
+  k.rot = it.rotation;
+
+  // スナップ設定
+  posSnap = !!posSnapOn.checked;
+  posGrid = Math.max(1, Math.min(512, parseInt(posSnapGrid.value,10)||posGrid));
+
+  draw(); drawTimeline(); syncPropPanel();
 };
 
 // ====== 表示順序 ======
@@ -559,9 +623,40 @@ pauseBtn.onclick=()=>{ isPlaying=false; };
 resetTimeBtn.onclick=()=>{ tNow=0; updateTimeLabel(); draw(); drawTimeline(); };
 function loop(ts){ if(!isPlaying) return; if(!lastTs) lastTs=ts; const dt=(ts-lastTs)/1000; lastTs=ts; tNow+=dt; if(tNow>duration){ tNow=duration; isPlaying=false; } updateTimeLabel(); draw(); drawTimeline(); requestAnimationFrame(loop); }
 
-// ====== キーボード（Undo/Redo, Delete） ======
+// ====== キーボード（Undo/Redo, Delete, Copy/Paste） ======
 window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; const z=e.key.toLowerCase()==='z'; const y=e.key.toLowerCase()==='y'; if((e.ctrlKey||e.metaKey) && z && !e.shiftKey){ e.preventDefault(); undo(); } else if((e.ctrlKey||e.metaKey) && ( (z && e.shiftKey) || y )){ e.preventDefault(); redo(); } });
 window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; if(e.key==="Delete" || e.key==="Backspace"){ if(items.length===0) return; pushUndo(); items.splice(activeIndex,1); if(activeIndex>=items.length) activeIndex=items.length-1; draw(); drawTimeline(); e.preventDefault(); return; } });
+
+// クリップボード（アプリ内）
+let clipItem=null;
+function deepCopy(o){ return JSON.parse(JSON.stringify(o)); }
+window.addEventListener('keydown',(e)=>{
+  const tag=document.activeElement?.tagName;
+  if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+
+  // Copy
+  if((e.ctrlKey||e.metaKey) && (e.key.toLowerCase()==='c')){
+    if(items[activeIndex]){ clipItem=deepCopy(items[activeIndex]); }
+    e.preventDefault();
+  }
+
+  // Paste
+  if((e.ctrlKey||e.metaKey) && (e.key.toLowerCase()==='v')){
+    if(clipItem){
+      pushUndo();
+      const cp=deepCopy(clipItem);
+      // 名称に * を付ける（重複回避用の簡易目印）
+      cp.name = (cp.name||'Item')+'*';
+      // 位置とキーを少しずらす
+      cp.pos.x += 20; cp.pos.y += 20;
+      if(Array.isArray(cp.keys)){ cp.keys.forEach(k=>{ k.x+=20; k.y+=20; }); }
+      items.push(cp);
+      activeIndex=items.length-1;
+      syncPropPanel(); draw(); drawTimeline();
+    }
+    e.preventDefault();
+  }
+});
 
 // ====== TLコントロール ======
 const tlZoomInput=document.getElementById('tlZoom');
@@ -611,10 +706,13 @@ init();
   const t=1.23; const x=tToX(t); const t2=xToT(x); console.assert(Math.abs(t-t2)<1e-6,'t<->x invertible');
   const it=items[0]; const pA=getStateAtTime(it,0); const pB=getStateAtTime(it,duration/2); console.assert(pA&&pB,'pos/rot interpolation works');
   console.assert(!!document.getElementById('exportGifBtn'),'export button exists');
-  const fps=10, s=0, e=2; const frames=Math.max(1, Math.round((e-s)*fps)+1); console.assert(frames===21,'frame count inclusive end');
+  // コピー & ペースト（アプリ内クリップボード）簡易テスト
+  clipItem = deepCopy(items[0]); const before=items.length;
+  const cp=deepCopy(clipItem); cp.pos.x+=20; cp.pos.y+=20; if(Array.isArray(cp.keys)) cp.keys.forEach(k=>{k.x+=20;k.y+=20;});
+  items.push(cp); console.assert(items.length===before+1,'copy/paste adds item');
+  items.pop();
   console.log('[Tests] OK');
 }catch(e){ console.error('[Tests] FAIL',e); }})();
-
 }); // DOMContentLoaded
 </script>
 </body>
