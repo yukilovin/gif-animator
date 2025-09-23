@@ -357,7 +357,7 @@ function drawItem(it, pos, i){
     lines.forEach((ln,iLine)=> ctx.fillText(ln, pos.x, pos.y+(iLine-(lines.length-1)/2)*(Math.max(8,(it.fontSize||20))*1.2*s)));
   }
 
-  // 選択枠
+  // 選択枠（回転は視覚のみ。枠は軸平行）
   if(isSelected(i)){
     ctx.strokeStyle= it.locked ? '#9ca3af' : '#f59e0b';
     ctx.lineWidth=3*s;
@@ -383,11 +383,9 @@ function draw(){
   drawTargets();
   items.forEach((it,i)=>{
     const st=getStateAtTime(it,tNow);
-    // 表示用状態を更新
     it.pos.x=st.x; it.pos.y=st.y; it.rotation=st.rot;
     drawItem(it, st, i);
   });
-  // 座標リードアウト（先頭選択）
   const idx=firstSelected(); if(idx>=0){ const it=items[idx]; const st=getStateAtTime(it,tNow); coordReadout.textContent=`X: ${st.x|0}, Y: ${st.y|0}`; }
 }
 
@@ -399,7 +397,6 @@ function drawTimeline(){
   tctx.strokeStyle='#e5e7eb'; tctx.strokeRect(0.5,0.5,TL.width-1,TL.height-1);
   tctx.fillStyle='#111827'; tctx.font='12px ui-sans-serif'; tctx.fillText('タイムライン',12,18);
 
-  // 目盛
   const steps=Math.max(2,Math.min(20,Math.ceil(viewDur())));
   tctx.fillStyle='#374151'; tctx.font='12px ui-monospace';
   for(let i=0;i<=steps;i++){
@@ -409,12 +406,10 @@ function drawTimeline(){
     tctx.fillStyle='#374151';
   }
 
-  // レーン
   items.forEach((it,i)=>{
     const y=laneTop+i*(laneH+laneGap);
 
     // ロック/表示アイコン領域
-    // 🔒/🔓
     tctx.fillStyle='#f1f5f9';
     tctx.fillRect(LEFT_PAD,y,ICON_W_LOCK,laneH);
     tctx.strokeStyle='#e2e8f0';
@@ -423,7 +418,6 @@ function drawTimeline(){
     tctx.font='13px ui-sans-serif';
     tctx.fillText(it.locked?'🔒':'🔓', LEFT_PAD+4, y+laneH-7);
 
-    // 👁/🙈
     tctx.fillStyle='#f1f5f9';
     tctx.fillRect(LEFT_PAD+ICON_W_LOCK,y,ICON_W_EYE,laneH);
     tctx.strokeStyle='#e2e8f0';
@@ -431,19 +425,16 @@ function drawTimeline(){
     tctx.fillStyle= it.visible ? '#334155' : '#64748b';
     tctx.fillText(it.visible?'👁':'🙈', LEFT_PAD+ICON_W_LOCK+4, y+laneH-7);
 
-    // アイテム名
     tctx.fillStyle=isSelected(i)?'#111827':'#6b7280';
     tctx.font='12px ui-sans-serif';
     tctx.fillText((it.name||it.type)+(it.locked?' 🔒':''), NAME_X, y+laneH-6);
 
-    // バー
     const barMuted = it.locked || !it.visible;
     tctx.fillStyle= barMuted ? '#eef2ff' : '#e0e7ff';
     tctx.fillRect(80,y,TL.width-96,laneH);
     tctx.strokeStyle='#c7d2fe';
     tctx.strokeRect(80.5,y+0.5,TL.width-97,laneH-1);
 
-    // キー
     (it.keys||[]).forEach((k)=>{
       const x=tToX(k.t); const size=8;
       tctx.fillStyle= barMuted ? '#94a3b8' : '#2563eb';
@@ -467,20 +458,17 @@ TL.addEventListener('mousedown',e=>{
   const lane=laneIndexAtY(y); if(lane<0){ tNow=applySnap(xToT(x)); updateTimeLabel(); draw(); drawTimeline(); return; }
   const it=items[lane];
 
-  // アイコン領域クリック
+  // TLのロック/可視トグル
   if(x>=LEFT_PAD && x<LEFT_PAD+ICON_W_LOCK){ it.locked=!it.locked; drawTimeline(); syncPropPanel(); return; }
   if(x>=LEFT_PAD+ICON_W_LOCK && x<LEFT_PAD+ICON_W_LOCK+ICON_W_EYE){ it.visible=!it.visible; draw(); drawTimeline(); return; }
 
-  // 名前クリック：選択（Ctrl/⌘でトグル）
-  if(x>=NAME_X && x<80){
-    // あり得ないが保険
-  }
+  // 選択
   const add = e.ctrlKey||e.metaKey;
   if(add){ if(isSelected(lane)) selected.delete(lane); else selected.add(lane); }
   else { selected.clear(); selected.add(lane); }
   syncPropPanel();
 
-  // キードラッグ開始（ロック/不可視なら不可）
+  // キー掴み
   if(!it.locked && it.visible){
     const yMid=(laneTop+lane*(laneH+laneGap))+laneH/2; const th=10;
     for(let k=0;k<(it.keys||[]).length;k++){
@@ -517,43 +505,36 @@ TL.addEventListener('wheel',e=>{
   }
 },{passive:false});
 
-// ====== キャンバス入力（複数選択・ドラッグ） ======
+// ====== キャンバス入力（複数選択・ターゲット優先・ドラッグ） ======
 let dragging=false, dragKind='item', dragIdx=-1, dragOff={x:0,y:0};
 let marqueeOn=false, marqueeStart=null;
 
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('mousedown',e=>{
-  const rect=canvas.getBoundingClientRect();
-  const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
+  const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
   if(e.button===1||e.button===2||spaceDown){ panning=true; panPrev=p; return; }
   const add = e.ctrlKey||e.metaKey;
   const w=screenToWorld(p);
 
-  // 1) まずターゲットを優先してヒット判定（表示ONかつロックOFFのときだけ掴める）
+  // 1) ターゲット判定（表示ONかつロックOFF）
   if(showTargets && !targetsLocked){
     for(let i=targets.length-1;i>=0;i--){
       const t=targets[i];
       const isCircle = ['A','B','C','D'].includes(t.name);
       if(isCircle){
-        const dx=w.x-t.x, dy=w.y-t.y;
-        if(dx*dx+dy*dy <= 50*50){
-          pushUndo();
-          dragging=true; dragKind='target'; dragIdx=i;
-          dragOff={x:w.x-t.x, y:w.y-t.y};
-          return;
+        const dx=w.x-t.x,dy=w.y-t.y;
+        if(dx*dx+dy*dy<=50*50){
+          pushUndo(); dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return;
         }
-      }else{
+      } else {
         if(Math.abs(w.x-t.x)<=50 && Math.abs(w.y-t.y)<=50){
-          pushUndo();
-          dragging=true; dragKind='target'; dragIdx=i;
-          dragOff={x:w.x-t.x, y:w.y-t.y};
-          return;
+          pushUndo(); dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return;
         }
       }
     }
   }
 
-  // 2) 次にアイテムの当たり判定（前面優先）
+  // 2) アイテム判定（前面優先）
   for(let i=items.length-1;i>=0;i--){
     const it=items[i];
     if(!showItems || !it.visible) continue;
@@ -562,15 +543,12 @@ canvas.addEventListener('mousedown',e=>{
       pushUndo();
       if(add){ if(isSelected(i)) selected.delete(i); else selected.add(i); }
       else { setActive(i,false); }
-
-      // 複数ドラッグのためのオフセット配列
-      dragKind='items'; dragging=true;
-      dragOff=[...selected].map(idx=>{
+      // 複数ドラッグ用オフセット配列
+      dragKind='items'; dragging=true; dragOff=[...selected].map(idx=>{
         const st=getStateAtTime(items[idx], tNow);
-        return {idx, offX:w.x-st.x, offY:w.y-st.y};
+        return {idx, offX:w.x - st.x, offY:w.y - st.y};
       });
-
-      // 掴んだ瞬間、現在時刻にキーを必ず用意
+      // 掴んだ瞬間、現在時刻にキーを必須作成
       for(const s of dragOff){ ensureKeyAtNow(items[s.idx]); }
       syncPropPanel(); draw();
       return;
@@ -579,51 +557,6 @@ canvas.addEventListener('mousedown',e=>{
 
   // 3) どちらにも当たっていなければマルキー開始
   marqueeOn=true; marqueeStart=p; updateMarquee(p,p);
-});
-
-
-  // 空白→マルキー開始（複数範囲選択）
-  const hitAny = hitAnyItem(w);
-  if(!hitAny){
-    marqueeOn=true; marqueeStart=p; updateMarquee(p,p); return;
-  }
-
-  // ターゲット（ロック/非表示は無関係だが、ターゲットレイヤーが非表示なら掴まない）
-  if(showTargets && !targetsLocked){
-    for(let i=targets.length-1;i>=0;i--){
-      const t=targets[i];
-      if(['A','B','C','D'].includes(t.name)){
-        const dx=w.x-t.x,dy=w.y-t.y; if(dx*dx+dy*dy<=50*50){ pushUndo(); dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; }
-      } else {
-        if(Math.abs(w.x-t.x)<=50 && Math.abs(w.y-t.y)<=50){ pushUndo(); dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; }
-      }
-    }
-  }
-
-  // アイテム（前面優先）可視かつ未ロックのみ掴める
-  for(let i=items.length-1;i>=0;i--){
-    const it=items[i];
-    if(!showItems || !it.visible) continue;
-    if(it.locked) continue;
-    if(hitItem(it,w)){
-      pushUndo();
-      // 複数選択トグル
-      if(add){ if(isSelected(i)) selected.delete(i); else selected.add(i); }
-      else { setActive(i,false); }
-      // ドラッグ用：まとめて動かすため各アイテムごとの差分記録
-      dragKind='items'; dragging=true; dragOff = [...selected].map(idx=>{
-        const st=getStateAtTime(items[idx], tNow);
-        return {idx, offX:w.x - st.x, offY:w.y - st.y};
-      });
-      // 重要：現在時刻のキーが無ければ作成（＝掴んだ瞬間から動く）
-      for(const s of dragOff){
-        const itm=items[s.idx];
-        ensureKeyAtNow(itm);
-      }
-      syncPropPanel(); draw();
-      return;
-    }
-  }
 });
 canvas.addEventListener('mousemove',e=>{
   const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
@@ -638,7 +571,6 @@ canvas.addEventListener('mousemove',e=>{
     const t=targets[dragIdx]; t.x=snapCoord(w.x-dragOff.x); t.y=snapCoord(w.y-dragOff.y); draw(); return;
   }
   if(dragKind==='items'){
-    // すべての選択アイテムの現在キーを更新
     for(const s of dragOff){
       const it=items[s.idx]; if(it.locked || !it.visible) continue;
       const nx=snapCoord(w.x - s.offX);
@@ -678,25 +610,14 @@ function updateMarquee(a,b){
   items.forEach((it,i)=>{
     if(!showItems||!it.visible) return;
     const st=getStateAtTime(it,tNow);
-    const hit = (it.type==='rect'||it.type==='textRect')
-      ? (st.x>=p1.x && st.x<=p2.x && st.y>=p1.y && st.y<=p2.y)
-      : (st.x>=p1.x && st.x<=p2.x && st.y>=p1.y && st.y<=p2.y);
+    const hit = (st.x>=p1.x && st.x<=p2.x && st.y>=p1.y && st.y<=p2.y);
     if(hit) selected.add(i);
   });
   syncPropPanel(); draw();
 }
 
-function hitAnyItem(w){
-  for(let i=items.length-1;i>=0;i--){
-    const it=items[i];
-    if(!showItems||!it.visible) continue;
-    if(hitItem(it,w)) return true;
-  }
-  return false;
-}
-
 function hitItem(it,w){
-  const st=getStateAtTime(it,tNow); // 回転は無視した近似バウンディング
+  const st=getStateAtTime(it,tNow); // 近似バウンディング（回転無視）
   if(it.type==='icon'||it.type==='circle'||it.type==='triangle'){
     const r=it.r||40; const dx=w.x-st.x,dy=w.y-st.y; return (dx*dx+dy*dy<=r*r);
   } else {
@@ -715,7 +636,6 @@ function nearestKeyAtTime(it, t){
   }
   return best;
 }
-
 function ensureKeyAtNow(it){
   const eps=1/120; const idx=it.keys.findIndex(k=>Math.abs(k.t-tNow)<eps);
   if(idx<0){
@@ -853,7 +773,7 @@ document.getElementById('applyFrameSize').onclick=()=>{ pushUndo(); let w=parseI
 function fitToFrame(){ const s=Math.min(canvas.width/W, canvas.height/H); const x=(canvas.width-W*s)/2; const y=(canvas.height-H*s)/2; setView(s,x,y); }
 
 // ====== 追加ボタン ======
-document.getElementById('addIconBtn').onclick=()=>{ pushUndo(); const name=prompt('アイコン名（例: X1）')||'X'; const x=160+items.length*40, y=H*0.78; items.push({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x, y, rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addIconBtn').onclick=()=>{ pushUndo(); const name=prompt('アイコン名（例: X1）')||'X'; const x=160+items.length*40, y=H*0.78; items.push({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
 document.getElementById('addCircleBtn').onclick=()=>{ pushUndo(); const x=W*0.2+Math.random()*W*0.6, y=H*0.5; items.push({type:'circle',name:'○',fill:'#0ea5e9',stroke:'#0a6fb2',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},w:80,h:80,text:'',keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
 document.getElementById('addRectBtn').onclick=()=>{ pushUndo(); const x=W*0.3, y=H*0.5; items.push({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:20,w:200,h:120,alpha:1,rotation:0,pos:{x,y},r:40,text:'',keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
 document.getElementById('addTriangleBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; items.push({type:'triangle',name:'△',fill:'#10b981',stroke:'#065f46',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},text:'△',keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
