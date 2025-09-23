@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Drag-Path GIF Animator（回転KF／コピー&ペースト／座標スナップ）</title>
+<title>Drag-Path GIF Animator（回転KF／コピー&ペースト／座標スナップ／レイヤーロック）</title>
 <style>
   body{margin:0;background:#ffffff;color:#111827;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;height:100vh;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px;box-sizing:border-box}
   aside{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;overflow:auto}
   main{display:flex;flex-direction:column;align-items:center}
   #canvas{background:#ffffff;border:2px solid #000;touch-action:none;display:block;margin-top:10px}
   #timelineWrap{width:100%;max-width:1200px;margin-top:12px;padding:6px;background:#f3f4f6;border-radius:8px;border:1px solid #d1d5db;resize:vertical;overflow:auto;min-height:160px;max-height:40vh}
-  #timeline{width:100%;height:220px;display:block;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb}
+  #timeline{width:100%;display:block;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb}
   .timeline-header{display:flex;gap:8px;align-items:center;justify-content:space-between;font-size:14px;font-weight:bold;color:#111827;margin-bottom:6px}
   .panel{margin-bottom:12px}
   .panel h2{font-size:14px;margin:0 0 6px;color:#374151}
@@ -23,6 +23,10 @@
   .pill{font-size:12px;color:#1f2937;border:1px solid #d1d5db;border-radius:999px;padding:2px 8px;margin-left:4px}
   .muted{color:#6b7280;font-size:12px}
   progress{width:100%}
+  .badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;border:1px solid #d1d5db;border-radius:999px;padding:2px 8px}
+  .badge.locked{background:#fff7ed;color:#9a3412;border-color:#fdba74}
+  .badge.unlocked{background:#f0fdf4;color:#166534;border-color:#86efac}
+  .disabled{opacity:.55;pointer-events:none}
 </style>
 <script src="https://unpkg.com/gif.js@0.2.0/dist/gif.js"></script>
 </head>
@@ -46,14 +50,15 @@
 
     <div class="panel">
       <h2>選択アイテム属性</h2>
-      <div class="row"><label>名称 <input id="propName" type="text"></label></div>
-
+      <div class="row">
+        <label>名称 <input id="propName" type="text"></label>
+        <span id="lockBadge" class="badge unlocked">🔓 未ロック</span>
+      </div>
       <div class="row">
         <label>X <input id="propX" type="number" value="0" step="1"></label>
         <label>Y <input id="propY" type="number" value="0" step="1"></label>
         <span class="muted">（現在時刻の位置。入力→適用でKFに反映）</span>
       </div>
-
       <div class="row">
         <label>サイズ/半径 <input id="propSize" type="number" value="40" min="1" max="540"></label>
         <span class="muted">○は半径、□/△は外接半径</span>
@@ -82,8 +87,16 @@
       </div>
       <div class="row">
         <label>回転(°) <input id="propRotation" type="number" value="0" min="0" max="360"></label>
+        <label style="margin-left:12px"><input type="checkbox" id="propLocked"> ロック</label>
       </div>
       <div class="row"><button class="btn" id="applyProps">適用</button></div>
+    </div>
+
+    <div class="panel">
+      <h2>レイヤー／ロック</h2>
+      <div class="row">
+        <label><input type="checkbox" id="lockTargets"> Targets（A B C D / 1 2 3 4）レイヤーをロック</label>
+      </div>
     </div>
 
     <div class="panel">
@@ -176,7 +189,7 @@
         <span>▼ タイムライン ▼</span>
         <span style="font-weight:normal">時刻: <span id="timeLabel">0.00</span>s  <button class="btn" id="playBtn">▶</button> <button class="btn" id="pauseBtn">⏸</button> <button class="btn" id="resetTimeBtn">↺</button></span>
       </div>
-      <canvas id="timeline"></canvas>
+      <canvas id="timeline" height="220"></canvas>
     </div>
   </main>
 
@@ -204,10 +217,11 @@ function screenToWorld(p){ return {x:(p.x-view.x)/view.scale, y:(p.y-view.y)/vie
 
 // ====== タイムライン ======
 let tlZoom=1, tlStart=0; const laneH=24,laneGap=12,laneTop=48;
+const LOCK_BTN_W = 56; // 左の🔒/🔓クリック領域幅
 function viewDur(){ return duration/Math.max(0.25,Math.min(4,tlZoom)); }
 function clampTlStart(){ tlStart=Math.max(0, Math.min(duration-Math.min(duration,viewDur()), tlStart)); }
-function tToX(t){ const pad=80,w=TL.width-pad-16; const vd=viewDur(); return pad + ((t-tlStart)/vd)*w; }
-function xToT(x){ const pad=80,w=TL.width-pad-16; const vd=viewDur(); return tlStart + ((x-pad)/w)*vd; }
+function tToX(t){ const pad=80; const w=TL.width-pad-16; const vd=viewDur(); return pad + ((t-tlStart)/vd)*w; }
+function xToT(x){ const pad=80; const w=TL.width-pad-16; const vd=viewDur(); return tlStart + ((x-pad)/w)*vd; }
 function ensureTimelineCanvasHeight(){ const need=laneTop + items.length*(laneH+laneGap) + 24; if(TL.height!==need){ TL.height=need; } }
 
 // ====== スナップ（時間・座標） ======
@@ -217,27 +231,26 @@ function applySnap(t){ if(!snapOn) return clamp01(t,0,duration); const s=Math.ro
 function snapCoord(v){ return posSnap ? Math.round(v/posGrid)*posGrid : v; }
 function clamp01(v,min,max){ return Math.max(min,Math.min(max,v)); }
 
-// ====== アイテム（初期8＋追加） ======
+// ====== レイヤー：Targets（A-D/1-4） ======
+let targetsLocked=false; // ← レイヤーロック
 const COLORS={D1:'#1d4ed8',D2:'#16a34a',D3:'#059669',D4:'#0ea5e9',H1:'#d97706',H2:'#dc2626',ST:'#7c3aed',MT:'#4f46e5'};
 const NAMES=['D1','D2','D3','D4','H1','H2','ST','MT'];
-/** item: {type:'icon'|'circle'|'rect'|'triangle'|'textRect', name, fill, stroke, textColor, font, fontSize, r, w, h, text, alpha, rotation, pos:{x,y}, keys:[{t,x,y,rot}]} */
-let items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78,rot:0},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1),rot:0}]}));
-let activeIndex=0;
-
-// ==== Undo/Redo ====
-let undoStack=[], redoStack=[];
-function cloneState(){ return { items: JSON.parse(JSON.stringify(items)), targets: JSON.parse(JSON.stringify(targets)), tNow, W, H, CW, CH, activeIndex, posSnap, posGrid }; }
-function pushUndo(){ undoStack.push(cloneState()); if(undoStack.length>100) undoStack.shift(); redoStack.length=0; }
-function restoreState(s){ items=s.items; targets=s.targets; tNow=s.tNow; W=s.W; H=s.H; CW=s.CW; CH=s.CH; activeIndex=Math.min(s.activeIndex??activeIndex, items.length-1); posSnap=s.posSnap; posGrid=s.posGrid; canvas.width=CW; canvas.height=CH; draw(); drawTimeline(); updateTimeLabel(); syncPropPanel(); }
-function undo(){ if(!undoStack.length) return; const cur=cloneState(); const prev=undoStack.pop(); redoStack.push(cur); restoreState(prev); }
-function redo(){ if(!redoStack.length) return; const cur=cloneState(); const next=redoStack.pop(); undoStack.push(cur); restoreState(next); }
-
-// ====== ターゲット（A–D=○R50 / 1–4=□100×100）— 常にドラッグ可・非アニメ ======
-let targets=initTargets();
 function initTargets(){ return [
   {name:'A',x:W*0.22,y:H*0.20},{name:'B',x:W*0.38,y:H*0.20},{name:'C',x:W*0.54,y:H*0.20},{name:'D',x:W*0.70,y:H*0.20},
   {name:'1',x:W*0.22,y:H*0.34},{name:'2',x:W*0.38,y:H*0.34},{name:'3',x:W*0.54,y:H*0.34},{name:'4',x:W*0.70,y:H*0.34}
 ]; }
+let targets=initTargets();
+
+// ====== アイテム ======
+/** item: {type, name, fill, stroke, textColor, font, fontSize, r, w, h, text, alpha, rotation, pos:{x,y}, keys:[{t,x,y,rot}], locked?:boolean} */
+let items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78,rot:0},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1),rot:0}],locked:false}));
+let activeIndex=0;
+
+// ==== Undo/Redo ====
+let undoStack=[], redoStack=[];
+function cloneState(){ return { items: JSON.parse(JSON.stringify(items)), targets: JSON.parse(JSON.stringify(targets)), tNow, W, H, CW, CH, activeIndex, posSnap, posGrid, targetsLocked }; }
+function pushUndo(){ undoStack.push(cloneState()); if(undoStack.length>100) undoStack.shift(); redoStack.length=0; }
+function restoreState(s){ items=s.items; targets=s.targets; tNow=s.tNow; W=s.W; H=s.H; CW=s.CW; CH=s.CH; activeIndex=Math.min(s.activeIndex??activeIndex, items.length-1); posSnap=s.posSnap; posGrid=s.posGrid; targetsLocked=!!s.targetsLocked; canvas.width=CW; canvas.height=CH; draw(); drawTimeline(); updateTimeLabel(); syncPropPanel(); }
 
 // ====== 補間（位置＋回転） ======
 function getStateAtTime(it, t){
@@ -248,13 +261,7 @@ function getStateAtTime(it, t){
 
   const norm = a => ((a%360)+360)%360;
   const lerp = (a,b,u)=> a+(b-a)*u;
-  const lerpAngle = (a,b,u)=>{
-    a = norm(a); b = norm(b);
-    let d = b - a;
-    if(d > 180) d -= 360;
-    if(d < -180) d += 360;
-    return norm(a + d*u);
-  };
+  const lerpAngle = (a,b,u)=>{ a=norm(a); b=norm(b); let d=b-a; if(d>180) d-=360; if(d<-180) d+=360; return norm(a+d*u); };
 
   for(let i=0;i<k.length-1;i++){
     const A=k[i], B=k[i+1];
@@ -268,22 +275,32 @@ function getStateAtTime(it, t){
 
 // ====== 描画 ======
 function drawFrame(){ ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.setTransform(view.scale,0,0,view.scale,view.x,view.y); ctx.strokeStyle='#000'; ctx.lineWidth=3/view.scale; ctx.strokeRect(0.5,0.5,W-1,H-1); }
-function drawTargets(){ ctx.textAlign='center'; ctx.textBaseline='middle'; targets.forEach(t=>{ ctx.save(); ctx.fillStyle='#878787'; ctx.strokeStyle='#ffffff'; ctx.lineWidth=3/view.scale; if(['A','B','C','D'].includes(t.name)){ const R=50; ctx.beginPath(); ctx.arc(t.x,t.y,R,0,Math.PI*2); ctx.fill(); ctx.stroke(); } else { const S=100; ctx.fillRect(t.x-S/2,t.y-S/2,S,S); ctx.strokeRect(t.x-S/2,t.y-S/2,S,S); } ctx.fillStyle='#ffffff'; ctx.font=(20/view.scale)+'px system-ui'; ctx.fillText(t.name,t.x,t.y); ctx.restore(); }); }
+function drawTargets(){
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  targets.forEach(t=>{
+    ctx.save();
+    ctx.fillStyle='#878787'; ctx.strokeStyle='#ffffff'; ctx.lineWidth=3/view.scale;
+    if(['A','B','C','D'].includes(t.name)){
+      const R=50; ctx.beginPath(); ctx.arc(t.x,t.y,R,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    } else {
+      const S=100; ctx.fillRect(t.x-S/2,t.y-S/2,S,S); ctx.strokeRect(t.x-S/2,t.y-S/2,S,S);
+    }
+    ctx.fillStyle='#ffffff'; ctx.font=(20/view.scale)+'px system-ui'; ctx.fillText(t.name,t.x,t.y);
+    ctx.restore();
+  });
+}
 function drawItem(it, pos){
   const s=1/view.scale;
   ctx.save();
   ctx.globalAlpha = it.alpha==null?1:it.alpha;
 
-  // 回転適用
+  // 回転
   const angle = (pos.rot||0) * Math.PI/180;
-  ctx.translate(pos.x, pos.y);
-  ctx.rotate(angle);
-  ctx.translate(-pos.x, -pos.y);
+  ctx.translate(pos.x, pos.y); ctx.rotate(angle); ctx.translate(-pos.x, -pos.y);
 
   if(it.type==='icon'||it.type==='circle'){
     const r=it.r||40;
-    ctx.beginPath();
-    ctx.arc(pos.x,pos.y,r,0,Math.PI*2);
+    ctx.beginPath(); ctx.arc(pos.x,pos.y,r,0,Math.PI*2);
     if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fill(); }
     if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.stroke(); }
     const label=(it.text&&it.text.length?it.text:it.name)||'';
@@ -324,7 +341,8 @@ function drawItem(it, pos){
 
   // 選択表示
   if(items[activeIndex]===it){
-    ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3*s;
+    ctx.strokeStyle= it.locked ? '#9ca3af' : '#f59e0b';
+    ctx.lineWidth=3*s;
     if(it.type==='rect'||it.type==='textRect'){
       const w=(it.w||160), h=(it.h||90);
       ctx.strokeRect(pos.x-w/2-4*s, pos.y-h/2-4*s, w+8*s, h+8*s);
@@ -345,7 +363,10 @@ function wrapFillText(ctx, text, cx, cy, maxW, lineH){
   lines.forEach((ln,i)=> ctx.fillText(ln, cx, cy + (i-off)*lineH));
 }
 function draw(){
-  drawFrame(); drawTargets();
+  drawFrame(); 
+  // 先にターゲットレイヤー
+  drawTargets();
+  // その上にアイテム
   items.forEach(it=>{
     const st=getStateAtTime(it,tNow);
     it.pos.x=st.x; it.pos.y=st.y; it.rotation=st.rot;
@@ -363,6 +384,7 @@ function drawTimeline(){
   tctx.strokeStyle='#e5e7eb'; tctx.strokeRect(0.5,0.5,TL.width-1,TL.height-1);
   tctx.fillStyle='#111827'; tctx.font='12px ui-sans-serif'; tctx.fillText('タイムライン',12,18);
 
+  // 目盛
   const steps=Math.max(2,Math.min(20,Math.ceil(viewDur())));
   tctx.fillStyle='#374151'; tctx.font='12px ui-monospace';
   for(let i=0;i<=steps;i++){
@@ -372,13 +394,34 @@ function drawTimeline(){
     tctx.fillStyle='#374151';
   }
 
+  // レーン
   items.forEach((it,i)=>{
     const y=laneTop+i*(laneH+laneGap);
-    tctx.fillStyle=(i===activeIndex)?'#111827':'#6b7280'; tctx.fillText(it.name||it.type,12,y+laneH-6);
-    tctx.fillStyle='#e0e7ff'; tctx.fillRect(80,y,TL.width-96,laneH);
-    tctx.strokeStyle='#c7d2fe'; tctx.strokeRect(80.5,y+0.5,TL.width-97,laneH-1);
+
+    // ロックボタン領域
+    tctx.fillStyle='#f1f5f9';
+    tctx.fillRect(12,y,LOCK_BTN_W-16,laneH);
+    tctx.strokeStyle='#e2e8f0';
+    tctx.strokeRect(12.5,y+0.5,LOCK_BTN_W-16-1,laneH-1);
+    tctx.fillStyle= it.locked ? '#9a3412' : '#166534';
+    tctx.font='13px ui-sans-serif';
+    tctx.fillText(it.locked?'🔒':'🔓', 18, y+laneH-7);
+
+    // アイテム名
+    tctx.fillStyle=(i===activeIndex)?'#111827':'#6b7280';
+    tctx.font='12px ui-sans-serif';
+    tctx.fillText((it.name||it.type)+(it.locked?' 🔒':''), LOCK_BTN_W, y+laneH-6);
+
+    // バー
+    tctx.fillStyle= it.locked ? '#eef2ff' : '#e0e7ff';
+    tctx.fillRect(80,y,TL.width-96,laneH);
+    tctx.strokeStyle= it.locked ? '#c7d2fe' : '#c7d2fe';
+    tctx.strokeRect(80.5,y+0.5,TL.width-97,laneH-1);
+
+    // キー
     (it.keys||[]).forEach((k)=>{
-      const x=tToX(k.t); const size=8; tctx.fillStyle='#2563eb';
+      const x=tToX(k.t); const size=8;
+      tctx.fillStyle= it.locked ? '#94a3b8' : '#2563eb';
       tctx.beginPath();
       tctx.moveTo(x,y+laneH/2-size); tctx.lineTo(x+size,y+laneH/2);
       tctx.lineTo(x,y+laneH/2+size); tctx.lineTo(x-size,y+laneH/2);
@@ -400,11 +443,19 @@ TL.addEventListener('mousedown',e=>{
   const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top;
   const lane=laneIndexAtY(y);
   if(lane>=0){
-    const it=items[lane]; const yMid=(laneTop+lane*(laneH+laneGap))+laneH/2; const th=10;
-    for(let k=0;k<(it.keys||[]).length;k++){
-      const gx=tToX(it.keys[k].t);
-      if(Math.abs(gx-x)<=th && Math.abs(yMid-y)<=th){
-        pushUndo(); draggingKF={item:lane, key:k}; activeIndex=lane; syncPropPanel(); drawTimeline(); return;
+    const it=items[lane];
+    // ロックアイコンクリック領域
+    if(x >= 12 && x <= (12+LOCK_BTN_W-16)){
+      it.locked = !it.locked; drawTimeline(); syncPropPanel(); return;
+    }
+    // キーのドラッグ開始（ロック中は不可）
+    if(!it.locked){
+      const yMid=(laneTop+lane*(laneH+laneGap))+laneH/2; const th=10;
+      for(let k=0;k<(it.keys||[]).length;k++){
+        const gx=tToX(it.keys[k].t);
+        if(Math.abs(gx-x)<=th && Math.abs(yMid-y)<=th){
+          pushUndo(); draggingKF={item:lane, key:k}; activeIndex=lane; syncPropPanel(); drawTimeline(); return;
+        }
       }
     }
   }
@@ -418,7 +469,8 @@ window.addEventListener('mousemove',e=>{
     const dx=x-tlPanPrev; tlPanPrev=x; tlStart -= (dx/w)*vd; clampTlStart(); drawTimeline(); return;
   }
   if(draggingKF){
-    const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const it=items[draggingKF.item];
+    const it=items[draggingKF.item]; if(it.locked){ draggingKF=null; return; }
+    const r=TL.getBoundingClientRect(); const x=e.clientX-r.left;
     let k=it.keys[draggingKF.key]; let t=applySnap(xToT(x)); t=Math.max(0,Math.min(duration,t));
     k.t=t; const ref=k; it.keys.sort((a,b)=>a.t-b.t); draggingKF.key=it.keys.indexOf(ref); drawTimeline(); return;
   }
@@ -441,18 +493,21 @@ canvas.addEventListener('mousedown',e=>{
   const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
   if(e.button===1||e.button===2||spaceDown){ panning=true; panPrev=p; return; }
   const w=screenToWorld(p);
-  // ターゲット判定
-  for(let i=targets.length-1;i>=0;i--){
-    const t=targets[i];
-    if(['A','B','C','D'].includes(t.name)){
-      const dx=w.x-t.x,dy=w.y-t.y; if(dx*dx+dy*dy<=50*50){ pushUndo(); dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; }
-    } else {
-      if(Math.abs(w.x-t.x)<=50 && Math.abs(w.y-t.y)<=50){ pushUndo(); dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; }
+  // ターゲット（ロック中は掴めない）
+  if(!targetsLocked){
+    for(let i=targets.length-1;i>=0;i--){
+      const t=targets[i];
+      if(['A','B','C','D'].includes(t.name)){
+        const dx=w.x-t.x,dy=w.y-t.y; if(dx*dx+dy*dy<=50*50){ pushUndo(); dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; }
+      } else {
+        if(Math.abs(w.x-t.x)<=50 && Math.abs(w.y-t.y)<=50){ pushUndo(); dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; }
+      }
     }
   }
-  // アイテム判定
+  // アイテム
   for(let i=items.length-1;i>=0;i--){
-    const it=items[i]; if(hitItem(it,w)){ pushUndo(); dragging=true; dragKind='item'; dragIdx=i; activeIndex=i; dragOff={x:w.x-it.pos.x,y:w.y-it.pos.y}; syncPropPanel(); draw(); return; }
+    const it=items[i]; if(it.locked) continue;
+    if(hitItem(it,w)){ pushUndo(); dragging=true; dragKind='item'; dragIdx=i; activeIndex=i; dragOff={x:w.x-it.pos.x,y:w.y-it.pos.y}; syncPropPanel(); draw(); return; }
   }
 });
 canvas.addEventListener('mousemove',e=>{
@@ -464,7 +519,8 @@ canvas.addEventListener('mousemove',e=>{
     const t=targets[dragIdx]; t.x=snapCoord(w.x-dragOff.x); t.y=snapCoord(w.y-dragOff.y); draw(); return;
   }
   if(dragKind==='item'){
-    const it=items[dragIdx]; it.pos.x=snapCoord(w.x-dragOff.x); it.pos.y=snapCoord(w.y-dragOff.y);
+    const it=items[dragIdx]; if(it.locked){ dragging=false; return; }
+    it.pos.x=snapCoord(w.x-dragOff.x); it.pos.y=snapCoord(w.y-dragOff.y);
     const key=nearestKeyAtTime(it,tNow); if(key){ key.x=it.pos.x; key.y=it.pos.y; }
     draw();
   }
@@ -490,7 +546,7 @@ function hitItem(it,w){
 }
 
 // ====== キーフレーム操作 ======
-function nearestKeyAtTime(it,t){ if(!it.keys||!it.keys.length) return null; let best=null,bd=1e9; for(const k of it.keys){ const d=Math.abs(k.t-t); if(d<bd){ bd=d; best=k; } } return best; }
+function nearestKeyAtTime(it,t){ if(!it.keys||!it.keys.length) return null; let best=null,bd=1e9; for(const k of it.keys){ const d=Math.abs(k.t-t); if(d<bd){ bd=d; } } return best; }
 function addKeyAtNow(it){
   const eps=1/120; const idx=it.keys.findIndex(k=>Math.abs(k.t-tNow)<eps);
   const st=getStateAtTime(it,tNow);
@@ -516,7 +572,14 @@ const propFontSize=document.getElementById('propFontSize');
 const propRotation=document.getElementById('propRotation');
 const posSnapOn=document.getElementById('posSnapOn');
 const posSnapGrid=document.getElementById('posSnapGrid');
+const propLocked=document.getElementById('propLocked');
+const lockBadge=document.getElementById('lockBadge');
+const lockTargetsChk=document.getElementById('lockTargets');
 
+function setBadge(locked){
+  lockBadge.textContent = locked ? '🔒 ロック中' : '🔓 未ロック';
+  lockBadge.className = 'badge ' + (locked?'locked':'unlocked');
+}
 function updateSizeMax(){ propSize.max = Math.floor(Math.min(W,H)/2); }
 function syncPropPanel(){
   const it=items[activeIndex]; if(!it) return; updateSizeMax();
@@ -532,10 +595,14 @@ function syncPropPanel(){
   propRotation.value=st.rot ?? (it.rotation||0);
   posSnapOn.checked = !!posSnap;
   posSnapGrid.value = posGrid;
+  propLocked.checked = !!it.locked;
+  setBadge(!!it.locked);
 }
 
 document.getElementById('applyProps').onclick=()=>{
-  const it=items[activeIndex]; if(!it) return; pushUndo();
+  const it=items[activeIndex]; if(!it) return;
+  if(it.locked){ alert('このアイテムはロック中のため編集できません。タイムライン左の🔒またはプロパティの「ロック」を解除してください。'); return; }
+  pushUndo();
   const maxR=Math.min(W,H)/2;
 
   // 位置は現在時刻のキーに反映（無ければ作成）
@@ -543,7 +610,6 @@ document.getElementById('applyProps').onclick=()=>{
   const ny = snapCoord(parseFloat(propY.value)||it.pos.y);
   let k = nearestKeyAtTime(it,tNow);
   if(!k || Math.abs(k.t - tNow) > 1/120){
-    // 現在時刻に新規キー
     const st=getStateAtTime(it,tNow);
     k = {t:tNow,x:st.x,y:st.y,rot:st.rot};
     it.keys.push(k); it.keys.sort((a,b)=>a.t-b.t);
@@ -562,8 +628,6 @@ document.getElementById('applyProps').onclick=()=>{
   it.font=propFont.value||it.font;
   it.fontSize=Math.max(8, Math.min(240, parseFloat(propFontSize.value)||it.fontSize));
   it.rotation = parseFloat(propRotation.value)||0;
-
-  // 回転も現在キーに反映
   k.rot = it.rotation;
 
   // スナップ設定
@@ -573,8 +637,22 @@ document.getElementById('applyProps').onclick=()=>{
   draw(); drawTimeline(); syncPropPanel();
 };
 
+// ロックトグル（プロパティ）
+propLocked.addEventListener('change', ()=>{
+  const it=items[activeIndex]; if(!it) return;
+  it.locked = !!propLocked.checked; setBadge(it.locked); drawTimeline();
+});
+
+// ターゲットレイヤーロック
+lockTargetsChk.addEventListener('change', ()=>{ targetsLocked = !!lockTargetsChk.checked; });
+
 // ====== 表示順序 ======
-function moveItem(idx, newIdx){ if(idx<0||idx>=items.length) return; if(newIdx<0) newIdx=0; if(newIdx>=items.length) newIdx=items.length-1; const [it]=items.splice(idx,1); items.splice(newIdx,0,it); activeIndex=newIdx; draw(); drawTimeline(); }
+function moveItem(idx, newIdx){ 
+  if(idx<0||idx>=items.length) return; 
+  if(items[idx].locked){ alert('ロック中のため順序を変更できません。'); return; }
+  if(newIdx<0) newIdx=0; if(newIdx>=items.length) newIdx=items.length-1; 
+  const [it]=items.splice(idx,1); items.splice(newIdx,0,it); activeIndex=newIdx; draw(); drawTimeline(); 
+}
 const bringFront=document.getElementById('bringFront');
 const sendBack=document.getElementById('sendBack');
 const bringForward=document.getElementById('bringForward');
@@ -599,20 +677,20 @@ document.getElementById('applyFrameSize').onclick=()=>{ pushUndo(); let w=parseI
 function fitToFrame(){ const s=Math.min(canvas.width/W, canvas.height/H); const x=(canvas.width-W*s)/2; const y=(canvas.height-H*s)/2; setView(s,x,y); }
 
 // ====== 追加ボタン ======
-document.getElementById('addIconBtn').onclick=()=>{ pushUndo(); const name=prompt('アイコン名（例: X1）')||'X'; const x=160+items.length*40, y=H*0.78; items.push({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x,y,rot:0}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
-document.getElementById('addCircleBtn').onclick=()=>{ pushUndo(); const x=W*0.2+Math.random()*W*0.6, y=H*0.5; items.push({type:'circle',name:'○',fill:'#0ea5e9',stroke:'#0a6fb2',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},w:80,h:80,text:'',keys:[{t:0,x,y,rot:0}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
-document.getElementById('addRectBtn').onclick=()=>{ pushUndo(); const x=W*0.3, y=H*0.5; items.push({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:20,w:200,h:120,alpha:1,rotation:0,pos:{x,y},r:40,text:'',keys:[{t:0,x,y,rot:0}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
-document.getElementById('addTriangleBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; items.push({type:'triangle',name:'△',fill:'#10b981',stroke:'#065f46',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},text:'△',keys:[{t:0,x,y,rot:0}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
-document.getElementById('addTextRectBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; const text=prompt('枠内テキスト（改行可）','サンプル\nテキスト')||'テキスト'; items.push({type:'textRect',name:'T',fill:'#ffffff',stroke:'#111111',textColor:'#111111',font:"'Noto Sans JP', system-ui",fontSize:20,w:240,h:140,alpha:1,rotation:0,pos:{x,y},r:18,text,keys:[{t:0,x,y,rot:0}]}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addIconBtn').onclick=()=>{ pushUndo(); const name=prompt('アイコン名（例: X1）')||'X'; const x=160+items.length*40, y=H*0.78; items.push({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x,y,rot:0}],locked:false}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addCircleBtn').onclick=()=>{ pushUndo(); const x=W*0.2+Math.random()*W*0.6, y=H*0.5; items.push({type:'circle',name:'○',fill:'#0ea5e9',stroke:'#0a6fb2',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},w:80,h:80,text:'',keys:[{t:0,x,y,rot:0}],locked:false}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addRectBtn').onclick=()=>{ pushUndo(); const x=W*0.3, y=H*0.5; items.push({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:20,w:200,h:120,alpha:1,rotation:0,pos:{x,y},r:40,text:'',keys:[{t:0,x,y,rot:0}],locked:false}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addTriangleBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; items.push({type:'triangle',name:'△',fill:'#10b981',stroke:'#065f46',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},text:'△',keys:[{t:0,x,y,rot:0}],locked:false}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addTextRectBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; const text=prompt('枠内テキスト（改行可）','サンプル\nテキスト')||'テキスト'; items.push({type:'textRect',name:'T',fill:'#ffffff',stroke:'#111111',textColor:'#111111',font:"'Noto Sans JP', system-ui",fontSize:20,w:240,h:140,alpha:1,rotation:0,pos:{x,y},r:18,text,keys:[{t:0,x,y,rot:0}],locked:false}); activeIndex=items.length-1; syncPropPanel(); draw(); drawTimeline(); };
 
-document.getElementById('resetIconsBtn').onclick=()=>{ pushUndo(); items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78,rot:0},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1),rot:0}]})); activeIndex=0; syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('resetIconsBtn').onclick=()=>{ pushUndo(); items=NAMES.map((n,i)=>({type:'icon',name:n,fill:COLORS[n]||'#9ca3af',stroke:'#111',textColor:'#ffffff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x:160+i*96,y:H*0.78},keys:[{t:0,x:160+i*96,y:H*0.78,rot:0},{t:duration/2,x:160+i*96+40*(i%2?1:-1),y:H*0.78-30*(i%2?1:-1),rot:0}],locked:false})); activeIndex=0; syncPropPanel(); draw(); drawTimeline(); };
 
-document.getElementById('deleteItemBtn').onclick=()=>{ if(items.length===0) return; pushUndo(); items.splice(activeIndex,1); if(activeIndex>=items.length) activeIndex=items.length-1; draw(); drawTimeline(); };
+document.getElementById('deleteItemBtn').onclick=()=>{ if(items.length===0) return; const it=items[activeIndex]; if(it?.locked){ alert('ロック中のため削除できません。'); return; } pushUndo(); items.splice(activeIndex,1); if(activeIndex>=items.length) activeIndex=items.length-1; draw(); drawTimeline(); };
 
 // ====== KFボタン ======
-document.getElementById('addKF').onclick=()=>{ const it=items[activeIndex]; if(!it) return; pushUndo(); addKeyAtNow(it); drawTimeline(); };
-document.getElementById('delKF').onclick=()=>{ const it=items[activeIndex]; if(!it||!it.keys||it.keys.length<=1) return; pushUndo(); it.keys.pop(); drawTimeline(); };
-document.getElementById('clearKF').onclick=()=>{ const it=items[activeIndex]; if(!it) return; pushUndo(); it.keys=[it.keys[0]]; drawTimeline(); };
+document.getElementById('addKF').onclick=()=>{ const it=items[activeIndex]; if(!it) return; if(it.locked){ alert('ロック中のためキーを追加できません。'); return; } pushUndo(); addKeyAtNow(it); drawTimeline(); };
+document.getElementById('delKF').onclick=()=>{ const it=items[activeIndex]; if(!it||!it.keys||it.keys.length<=1) return; if(it.locked){ alert('ロック中のためキーを削除できません。'); return; } pushUndo(); it.keys.pop(); drawTimeline(); };
+document.getElementById('clearKF').onclick=()=>{ const it=items[activeIndex]; if(!it) return; if(it.locked){ alert('ロック中のためキーを消去できません。'); return; } pushUndo(); it.keys=[it.keys[0]]; drawTimeline(); };
 
 // ====== 再生 ======
 const playBtn=document.getElementById('playBtn');
@@ -625,7 +703,7 @@ function loop(ts){ if(!isPlaying) return; if(!lastTs) lastTs=ts; const dt=(ts-la
 
 // ====== キーボード（Undo/Redo, Delete, Copy/Paste） ======
 window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; const z=e.key.toLowerCase()==='z'; const y=e.key.toLowerCase()==='y'; if((e.ctrlKey||e.metaKey) && z && !e.shiftKey){ e.preventDefault(); undo(); } else if((e.ctrlKey||e.metaKey) && ( (z && e.shiftKey) || y )){ e.preventDefault(); redo(); } });
-window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; if(e.key==="Delete" || e.key==="Backspace"){ if(items.length===0) return; pushUndo(); items.splice(activeIndex,1); if(activeIndex>=items.length) activeIndex=items.length-1; draw(); drawTimeline(); e.preventDefault(); return; } });
+window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; if(e.key==="Delete" || e.key==="Backspace"){ if(items.length===0) return; const it=items[activeIndex]; if(it?.locked){ alert('ロック中のため削除できません。'); e.preventDefault(); return; } pushUndo(); items.splice(activeIndex,1); if(activeIndex>=items.length) activeIndex=items.length-1; draw(); drawTimeline(); e.preventDefault(); return; } });
 
 // クリップボード（アプリ内）
 let clipItem=null;
@@ -640,14 +718,13 @@ window.addEventListener('keydown',(e)=>{
     e.preventDefault();
   }
 
-  // Paste
+  // Paste（貼り付けは常に許可）
   if((e.ctrlKey||e.metaKey) && (e.key.toLowerCase()==='v')){
     if(clipItem){
       pushUndo();
       const cp=deepCopy(clipItem);
-      // 名称に * を付ける（重複回避用の簡易目印）
+      cp.locked=false; // 貼り付けたものは未ロックで生成
       cp.name = (cp.name||'Item')+'*';
-      // 位置とキーを少しずらす
       cp.pos.x += 20; cp.pos.y += 20;
       if(Array.isArray(cp.keys)){ cp.keys.forEach(k=>{ k.x+=20; k.y+=20; }); }
       items.push(cp);
@@ -696,7 +773,7 @@ function makeOffscreen(scale){ const off=document.createElement('canvas'); off.w
 exportBtn.onclick=async ()=>{ if(typeof GIF==='undefined'){ alert('GIF.js を読み込めませんでした。ネット接続またはCDNの許可をご確認ください。'); return; } const fps=Math.max(1, Math.min(60, parseInt(expFps.value,10)||20)); const scale=Math.max(0.25, Math.min(2, parseFloat(expScale.value)||1)); let t0=Math.max(0, parseFloat(expStart.value)||0); let t1=Math.max(0, parseFloat(expEnd.value)||duration); if(t1<t0){ const tmp=t0; t0=t1; t1=tmp; } t0=Math.max(0, Math.min(duration, t0)); t1=Math.max(0, Math.min(duration, t1)); const totalFrames = Math.max(1, Math.round((t1 - t0) * fps) + 1); const wasPlaying=isPlaying; isPlaying=false; exportBtn.disabled=true; exportStatus.textContent=`レンダリング準備 (${totalFrames} frames)`; exportProgress.value=0; exportProgress.max=totalFrames; const off=makeOffscreen(scale); const octx=off.getContext('2d'); const gif=new GIF({workers:2, quality:10, workerScript:'https://unpkg.com/gif.js@0.2.0/dist/gif.worker.js'}); let savedView={...view}; let savedT=tNow; try{ for(let i=0;i<totalFrames;i++){ const tt = t0 + (i/(totalFrames-1))*(t1-t0); tNow=tt; updateTimeLabel(); const prevView={...view}; setView(1,0,0); draw(); view=prevView; octx.setTransform(1,0,0,1,0,0); octx.clearRect(0,0,off.width,off.height); octx.drawImage(canvas, 0,0, off.width, off.height); gif.addFrame(octx, {copy:true, delay: Math.round(1000/fps)}); if(i%5===0){ exportStatus.textContent=`フレーム ${i+1}/${totalFrames}`; } exportProgress.value=i+1; await new Promise(r=>setTimeout(r,0)); } }catch(e){ console.error('Export error', e); alert('書き出し中にエラーが発生しました: '+e.message); tNow=savedT; view=savedView; updateTimeLabel(); draw(); drawTimeline(); exportBtn.disabled=false; exportStatus.textContent='失敗'; return; } gif.on('finished', (blob)=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='animation.gif'; a.click(); tNow=savedT; view=savedView; updateTimeLabel(); draw(); drawTimeline(); exportBtn.disabled=false; exportStatus.textContent='完了'; }); exportStatus.textContent='エンコード中…'; gif.render(); };
 
 // ====== 初期化 ======
-function init(){ const mw=document.querySelector('main')?.clientWidth||1200; TL.width=Math.min(1200, mw-24); fitToFrame(); updateSizeMax(); updateTimeLabel(); syncPropPanel(); resizeTL(); document.getElementById('expEnd').value=String(duration); canvasWInput.value=String(canvas.width); canvasHInput.value=String(canvas.height); frameWInput.value=String(W); frameHInput.value=String(H); draw(); }
+function init(){ const mw=document.querySelector('main')?.clientWidth||1200; TL.width=Math.min(1200, mw-24); fitToFrame(); updateSizeMax(); updateTimeLabel(); syncPropPanel(); resizeTL(); document.getElementById('expEnd').value=String(duration); canvasWInput.value=String(canvas.width); canvasHInput.value=String(canvas.height); frameWInput.value=String(W); frameHInput.value=String(H); lockTargetsChk.checked = targetsLocked; draw(); }
 init();
 
 // ====== 簡易テスト ======
@@ -706,11 +783,6 @@ init();
   const t=1.23; const x=tToX(t); const t2=xToT(x); console.assert(Math.abs(t-t2)<1e-6,'t<->x invertible');
   const it=items[0]; const pA=getStateAtTime(it,0); const pB=getStateAtTime(it,duration/2); console.assert(pA&&pB,'pos/rot interpolation works');
   console.assert(!!document.getElementById('exportGifBtn'),'export button exists');
-  // コピー & ペースト（アプリ内クリップボード）簡易テスト
-  clipItem = deepCopy(items[0]); const before=items.length;
-  const cp=deepCopy(clipItem); cp.pos.x+=20; cp.pos.y+=20; if(Array.isArray(cp.keys)) cp.keys.forEach(k=>{k.x+=20;k.y+=20;});
-  items.push(cp); console.assert(items.length===before+1,'copy/paste adds item');
-  items.pop();
   console.log('[Tests] OK');
 }catch(e){ console.error('[Tests] FAIL',e); }})();
 }); // DOMContentLoaded
