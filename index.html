@@ -56,6 +56,23 @@
       </div>
       <div class="row"><span class="muted">コピー：Ctrl+C ／ ペースト：Ctrl+V</span></div>
     </div>
+    <div class="panel">
+  <h2>プロジェクト保存 / 読込</h2>
+  <div class="row">
+    <button class="btn" id="saveLocalBtn">💾 ブラウザに保存</button>
+    <button class="btn" id="loadLocalBtn">⤴ 取り出し</button>
+    <span class="muted">（同一ブラウザ内）</span>
+  </div>
+  <div class="row">
+    <button class="btn" id="downloadBtn">⬇ JSONダウンロード</button>
+    <input type="file" id="uploadJson" accept="application/json">
+    <span class="muted">（ファイル保存/読込）</span>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="autosaveOn" checked> 自動セーブ（数秒ごと）</label>
+  </div>
+</div>
+
 
     <div class="panel">
       <h2>選択アイテム属性</h2>
@@ -945,6 +962,141 @@ function redo(){ if(!redoStack.length) return; const cur=cloneState(); const nex
   console.log('[Tests] OK');
 }catch(e){ console.error('[Tests] FAIL',e); }})();
 }); // DOMContentLoaded
+
+  // ====== プロジェクト セーブ/ロード ======
+// 既存の cloneState()/restoreState()/reviveImages() を利用します。
+// - ローカル保存キー
+const LS_KEY = 'dragpath_gif_animator_project_v1';
+
+// セーブに含める追加メタ（任意）
+function serializeProject(){
+  const s = cloneState();
+  // 追加で現在の設定も保存（必要に応じて）
+  s.meta = {
+    savedAt: new Date().toISOString(),
+    app: 'Drag-Path GIF Animator',
+    version: 1
+  };
+  return JSON.stringify(s);
+}
+
+function deserializeProject(jsonStr){
+  const data = JSON.parse(jsonStr);
+  // 後方互換のため存在チェック
+  if(!data || !data.items || !Array.isArray(data.items)) throw new Error('プロジェクト形式が不正です');
+  return data;
+}
+
+// ブラウザ保存/読込（localStorage）
+function saveToLocal(){
+  try{
+    const json = serializeProject();
+    localStorage.setItem(LS_KEY, json);
+    toast('保存しました（ブラウザ内）');
+  }catch(e){
+    alert('保存に失敗しました: '+e.message);
+  }
+}
+function loadFromLocal(){
+  try{
+    const json = localStorage.getItem(LS_KEY);
+    if(!json){ alert('保存データが見つかりません'); return; }
+    const data = deserializeProject(json);
+    restoreState(data);
+    toast('読み込み完了');
+  }catch(e){
+    alert('読み込みに失敗しました: '+e.message);
+  }
+}
+
+// JSONダウンロード/アップロード
+function downloadJson(){
+  try{
+    const json = serializeProject();
+    const blob = new Blob([json], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const dt = new Date().toISOString().replace(/[:.]/g,'-');
+    a.download = `gif_animator_project_${dt}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('JSONダウンロードを開始しました');
+  }catch(e){
+    alert('ダウンロードに失敗しました: '+e.message);
+  }
+}
+function uploadJson(file){
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{
+      const data = deserializeProject(e.target.result);
+      restoreState(data);
+      toast('JSONから読み込み完了');
+    }catch(err){
+      alert('JSONの読み込みに失敗: '+err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+// 簡易トースト（上部に一瞬出す）
+let toastTimer=null;
+function toast(msg){
+  let el = document.getElementById('toast');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.style.position='fixed';
+    el.style.top='10px';
+    el.style.left='50%';
+    el.style.transform='translateX(-50%)';
+    el.style.background='#111827';
+    el.style.color='#fff';
+    el.style.padding='6px 10px';
+    el.style.borderRadius='8px';
+    el.style.fontSize='12px';
+    el.style.boxShadow='0 2px 10px rgba(0,0,0,.2)';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.opacity='1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ el.style.opacity='0'; }, 1400);
+}
+
+// ボタンと入力にイベントを付与
+document.getElementById('saveLocalBtn').onclick = saveToLocal;
+document.getElementById('loadLocalBtn').onclick = loadFromLocal;
+document.getElementById('downloadBtn').onclick = downloadJson;
+document.getElementById('uploadJson').addEventListener('change', (e)=>{
+  const f = e.target.files && e.target.files[0];
+  if(f) uploadJson(f);
+});
+
+// ====== 自動セーブ（数秒おき & 操作時） ======
+const autosaveChk = document.getElementById('autosaveOn');
+let autosaveTimer = null;
+function scheduleAutosave(){
+  if(!autosaveChk.checked) return;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(()=>{ try{ saveToLocal(); }catch(_){} }, 2500);
+}
+// 操作系の代表箇所で呼ぶ（Undo記録直後など）
+const _origPushUndo = pushUndo;
+pushUndo = function(){
+  _origPushUndo();
+  scheduleAutosave();
+};
+
+// 初期表示時にも一度セーブ（初期状態の復帰を可能に）
+scheduleAutosave();
+
+// ページ離脱時にも念のため
+window.addEventListener('beforeunload', ()=>{
+  try{ if(autosaveChk.checked) saveToLocal(); }catch(_){}
+});
+
 </script>
+  
 </body>
 </html>
