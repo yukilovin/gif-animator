@@ -523,10 +523,64 @@ let marqueeOn=false, marqueeStart=null;
 
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('mousedown',e=>{
-  const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
+  const rect=canvas.getBoundingClientRect();
+  const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
   if(e.button===1||e.button===2||spaceDown){ panning=true; panPrev=p; return; }
   const add = e.ctrlKey||e.metaKey;
   const w=screenToWorld(p);
+
+  // 1) まずターゲットを優先してヒット判定（表示ONかつロックOFFのときだけ掴める）
+  if(showTargets && !targetsLocked){
+    for(let i=targets.length-1;i>=0;i--){
+      const t=targets[i];
+      const isCircle = ['A','B','C','D'].includes(t.name);
+      if(isCircle){
+        const dx=w.x-t.x, dy=w.y-t.y;
+        if(dx*dx+dy*dy <= 50*50){
+          pushUndo();
+          dragging=true; dragKind='target'; dragIdx=i;
+          dragOff={x:w.x-t.x, y:w.y-t.y};
+          return;
+        }
+      }else{
+        if(Math.abs(w.x-t.x)<=50 && Math.abs(w.y-t.y)<=50){
+          pushUndo();
+          dragging=true; dragKind='target'; dragIdx=i;
+          dragOff={x:w.x-t.x, y:w.y-t.y};
+          return;
+        }
+      }
+    }
+  }
+
+  // 2) 次にアイテムの当たり判定（前面優先）
+  for(let i=items.length-1;i>=0;i--){
+    const it=items[i];
+    if(!showItems || !it.visible) continue;
+    if(it.locked) continue;
+    if(hitItem(it,w)){
+      pushUndo();
+      if(add){ if(isSelected(i)) selected.delete(i); else selected.add(i); }
+      else { setActive(i,false); }
+
+      // 複数ドラッグのためのオフセット配列
+      dragKind='items'; dragging=true;
+      dragOff=[...selected].map(idx=>{
+        const st=getStateAtTime(items[idx], tNow);
+        return {idx, offX:w.x-st.x, offY:w.y-st.y};
+      });
+
+      // 掴んだ瞬間、現在時刻にキーを必ず用意
+      for(const s of dragOff){ ensureKeyAtNow(items[s.idx]); }
+      syncPropPanel(); draw();
+      return;
+    }
+  }
+
+  // 3) どちらにも当たっていなければマルキー開始
+  marqueeOn=true; marqueeStart=p; updateMarquee(p,p);
+});
+
 
   // 空白→マルキー開始（複数範囲選択）
   const hitAny = hitAnyItem(w);
@@ -651,7 +705,17 @@ function hitItem(it,w){
 }
 
 // ====== キー操作 ======
-function nearestKeyAtTime(it,t){ if(!it.keys||!it.keys.length) return null; let best=null,bd=1e9; for(const k of it.keys){ const d=Math.abs(k.t-t); if(d<bd){ bd=d; } } return best; }
+function nearestKeyAtTime(it, t){
+  if(!it.keys || !it.keys.length) return null;
+  let best = it.keys[0];
+  let bd = Math.abs(it.keys[0].t - t);
+  for(const k of it.keys){
+    const d = Math.abs(k.t - t);
+    if(d < bd){ bd = d; best = k; }
+  }
+  return best;
+}
+
 function ensureKeyAtNow(it){
   const eps=1/120; const idx=it.keys.findIndex(k=>Math.abs(k.t-tNow)<eps);
   if(idx<0){
@@ -789,7 +853,7 @@ document.getElementById('applyFrameSize').onclick=()=>{ pushUndo(); let w=parseI
 function fitToFrame(){ const s=Math.min(canvas.width/W, canvas.height/H); const x=(canvas.width-W*s)/2; const y=(canvas.height-H*s)/2; setView(s,x,y); }
 
 // ====== 追加ボタン ======
-document.getElementById('addIconBtn').onclick=()=>{ pushUndo(); const name=prompt('アイコン名（例: X1）')||'X'; const x=160+items.length*40, y=H*0.78; items.push({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x:y?x:x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
+document.getElementById('addIconBtn').onclick=()=>{ pushUndo(); const name=prompt('アイコン名（例: X1）')||'X'; const x=160+items.length*40, y=H*0.78; items.push({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x, y, rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
 document.getElementById('addCircleBtn').onclick=()=>{ pushUndo(); const x=W*0.2+Math.random()*W*0.6, y=H*0.5; items.push({type:'circle',name:'○',fill:'#0ea5e9',stroke:'#0a6fb2',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},w:80,h:80,text:'',keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
 document.getElementById('addRectBtn').onclick=()=>{ pushUndo(); const x=W*0.3, y=H*0.5; items.push({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:20,w:200,h:120,alpha:1,rotation:0,pos:{x,y},r:40,text:'',keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
 document.getElementById('addTriangleBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; items.push({type:'triangle',name:'△',fill:'#10b981',stroke:'#065f46',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},text:'△',keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
