@@ -241,6 +241,16 @@ let duration=8; let tNow=0; let isPlaying=false; let lastTs=0;
 function updateTimeLabel(){ timeLabel.textContent=tNow.toFixed(2); }
 
 // ====== ビュー（ズーム/パン） ======
+  // 画面上のイベント座標を「キャンバス座標」に正規化（CSSピクセル→canvas.width/heightの座標）
+function getPointer(evt){
+  const rect = canvas.getBoundingClientRect();
+  const cssX = (evt.clientX ?? evt.x) - rect.left;
+  const cssY = (evt.clientY ?? evt.y) - rect.top;
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return { x: cssX * scaleX, y: cssY * scaleY };
+}
+
 const MIN_S=0.3, MAX_S=4; let view={scale:1,x:0,y:0}; let panning=false, panPrev=null, spaceDown=false;
 function setView(scale,x,y){ view.scale=Math.max(MIN_S,Math.min(MAX_S,scale)); view.x=x; view.y=y; draw(); }
 function screenToWorld(p){ return {x:(p.x-view.x)/view.scale, y:(p.y-view.y)/view.scale}; }
@@ -549,7 +559,7 @@ let groupInitials = null;            // [{idx, x0, y0}]
 
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('mousedown',e=>{
-  const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
+  const p = getPointer(e);
   if(e.button===1||e.button===2||spaceDown){ panning=true; panPrev=p; return; }
   const add = e.ctrlKey||e.metaKey;
   const w=screenToWorld(p);
@@ -607,10 +617,8 @@ canvas.addEventListener('mousedown',e=>{
 });
 
 canvas.addEventListener('mousemove',e=>{
-  const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
-
+  const p = getPointer(e);
   if(marqueeOn && marqueeStart){ updateMarquee(marqueeStart,p); return; }
-
   if(panning&&panPrev){ const dx=p.x-panPrev.x, dy=p.y-panPrev.y; setView(view.scale,view.x+dx,view.y+dy); panPrev=p; return; }
   if(!dragging) return;
   const w=screenToWorld(p);
@@ -650,7 +658,7 @@ window.addEventListener('keydown',e=>{ if(e.code==='Space'){ spaceDown=true; e.p
 window.addEventListener('keyup',e=>{ if(e.code==='Space'){ spaceDown=false; }});
 
 canvas.addEventListener('wheel',e=>{
-  const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
+  const p = getPointer(e);
   const before=screenToWorld(p);
   const delta=-(e.deltaY||e.wheelDelta)*0.001;
   const s=Math.max(MIN_S,Math.min(MAX_S, view.scale*(1+delta)));
