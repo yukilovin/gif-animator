@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Drag-Path GIF Animator（画像アイテム対応）</title>
+<title>Drag-Path GIF Animator（複数ドラッグ修正・画像・保存対応）</title>
 <style>
   body{margin:0;background:#ffffff;color:#111827;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;height:100vh;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px;box-sizing:border-box}
   aside{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;overflow:auto}
@@ -49,30 +49,30 @@
         <input type="file" id="imgInput" accept="image/*">
         <button class="btn" id="addImageBtn">＋ 画像アイテム</button>
       </div>
-      <div class="row"><span class="muted">複数選択：Ctrl/⌘クリック、または空白ドラッグで範囲選択</span></div>
+      <div class="row"><span class="muted">複数選択：Ctrl/⌘クリック／空白ドラッグで範囲選択</span></div>
       <div class="row">
         <button class="btn" id="lockSelBtn">🔒 選択をロック</button>
         <button class="btn" id="unlockSelBtn">🔓 選択を解除</button>
       </div>
       <div class="row"><span class="muted">コピー：Ctrl+C ／ ペースト：Ctrl+V</span></div>
     </div>
-    <div class="panel">
-  <h2>プロジェクト保存 / 読込</h2>
-  <div class="row">
-    <button class="btn" id="saveLocalBtn">💾 ブラウザに保存</button>
-    <button class="btn" id="loadLocalBtn">⤴ 取り出し</button>
-    <span class="muted">（同一ブラウザ内）</span>
-  </div>
-  <div class="row">
-    <button class="btn" id="downloadBtn">⬇ JSONダウンロード</button>
-    <input type="file" id="uploadJson" accept="application/json">
-    <span class="muted">（ファイル保存/読込）</span>
-  </div>
-  <div class="row">
-    <label><input type="checkbox" id="autosaveOn" checked> 自動セーブ（数秒ごと）</label>
-  </div>
-</div>
 
+    <div class="panel">
+      <h2>プロジェクト保存 / 読込</h2>
+      <div class="row">
+        <button class="btn" id="saveLocalBtn">💾 ブラウザに保存</button>
+        <button class="btn" id="loadLocalBtn">⤴ 取り出し</button>
+        <span class="muted">（同一ブラウザ内）</span>
+      </div>
+      <div class="row">
+        <button class="btn" id="downloadBtn">⬇ JSONダウンロード</button>
+        <input type="file" id="uploadJson" accept="application/json">
+        <span class="muted">（ファイル保存/読込）</span>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="autosaveOn" checked> 自動セーブ（数秒ごと）</label>
+      </div>
+    </div>
 
     <div class="panel">
       <h2>選択アイテム属性</h2>
@@ -286,7 +286,6 @@ function firstSelected(){ return selected.size? [...selected][0] : -1; }
 // ==== Undo/Redo ====
 let undoStack=[], redoStack=[];
 function cloneState(){
-  // 画像は imageSrc（dataURL）を持たせて JSON 化
   const serialItems = items.map(it=>{
     const o = JSON.parse(JSON.stringify(it));
     if(it.type==='image' && it.imageSrc){ o.imageSrc = it.imageSrc; }
@@ -303,7 +302,7 @@ function reviveImages(arr){
     }
   });
 }
-function pushUndo(){ undoStack.push(cloneState()); if(undoStack.length>100) undoStack.shift(); redoStack.length=0; }
+function pushUndo(){ undoStack.push(cloneState()); if(undoStack.length>100) undoStack.shift(); redoStack.length=0; scheduleAutosave(); }
 function restoreState(s){
   items=s.items; reviveImages(items);
   targets=s.targets; tNow=s.tNow; W=s.W; H=s.H; CW=s.CW; CH=s.CH;
@@ -403,7 +402,6 @@ function drawItem(it, pos, i){
   else if(it.type==='image'){
     const w=it.w||100, h=it.h||100;
     if(it.image){ ctx.drawImage(it.image, pos.x-w/2, pos.y-h/2, w, h); }
-    // 選択枠は矩形
   }
 
   // 選択枠
@@ -539,15 +537,6 @@ window.addEventListener('mousemove',e=>{
   }
 });
 window.addEventListener('mouseup',()=>{ tlPanning=false; draggingKF=null; });
-TL.addEventListener('wheel',e=>{
-  if(e.ctrlKey){
-    const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const tAt=xToT(x);
-    const delta=-(e.deltaY||e.wheelDelta)*0.001;
-    tlZoom=Math.max(0.25,Math.min(4, tlZoom*(1+delta)));
-    const vd=viewDur(); tlStart=tAt - vd/2; clampTlStart();
-    document.getElementById('tlZoom').value=String(tlZoom); drawTimeline(); e.preventDefault();
-  }
-},{passive:false});
 
 // ====== キャンバス入力（複数選択・ターゲット優先・ドラッグ） ======
 let dragging=false, dragKind='item', dragIdx=-1, dragOff={x:0,y:0};
@@ -555,7 +544,7 @@ let marqueeOn=false, marqueeStart=null;
 
 // ★追加：グループドラッグ用の基準点＆初期座標
 let groupDragAnchor = null;          // {x,y} クリック時のワールド座標
-let groupInitials = null;            // [{idx, x0, y0}] 選択アイテムの初期位置
+let groupInitials = null;            // [{idx, x0, y0}]
 
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('mousedown',e=>{
@@ -583,39 +572,39 @@ canvas.addEventListener('mousedown',e=>{
   }
 
   // 2) アイテム判定（前面優先）
-for(let i=items.length-1;i>=0;i--){
-  const it=items[i];
-  if(!showItems || !it.visible) continue;
-  if(it.locked) continue;
-  if(hitItem(it,w)){
-    pushUndo();
+  for(let i=items.length-1;i>=0;i--){
+    const it=items[i];
+    if(!showItems || !it.visible) continue;
+    if(it.locked) continue;
+    if(hitItem(it,w)){
+      pushUndo();
 
-    // 選択状態の更新（従来通り）
-    if(add){ if(isSelected(i)) selected.delete(i); else selected.add(i); }
-    else { setActive(i,false); }
+      // 選択更新
+      if(add){ if(isSelected(i)) selected.delete(i); else selected.add(i); }
+      else { setActive(i,false); }
 
-    // ★変更点：グループドラッグのアンカー＆初期座標を採取
-    groupDragAnchor = { x: w.x, y: w.y };
-    groupInitials = [...selected].map(idx=>{
-      const st=getStateAtTime(items[idx], tNow);
-      return { idx, x0: st.x, y0: st.y };
-    });
+      // ★基準点と初期座標を記録（クリック地点を“握る”）
+      groupDragAnchor = { x: w.x, y: w.y };
+      groupInitials = [...selected].map(idx=>{
+        const st=getStateAtTime(items[idx], tNow);
+        return { idx, x0: st.x, y0: st.y };
+      });
 
-    // すべての対象に現在時刻キーを確保
-    for(const s of groupInitials){ ensureKeyAtNow(items[s.idx]); }
+      // すべての対象に現在時刻キーを確保
+      for(const s of groupInitials){ ensureKeyAtNow(items[s.idx]); }
 
-    dragKind='items';
-    dragging=true;
+      dragKind='items';
+      dragging=true;
 
-    syncPropPanel(); draw();
-    return;
+      syncPropPanel(); draw();
+      return;
+    }
   }
-}
-
 
   // 3) マルキー開始
-  marqueeOn=true; marqueeStart=p; updateMarquee(p,p);
+  marqueeOn=true; marqueeStart=p; updateMarquee(marqueeStart,p);
 });
+
 canvas.addEventListener('mousemove',e=>{
   const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
 
@@ -628,36 +617,36 @@ canvas.addEventListener('mousemove',e=>{
   if(dragKind==='target'){
     const t=targets[dragIdx]; t.x=snapCoord(w.x-dragOff.x); t.y=snapCoord(w.y-dragOff.y); draw(); return;
   }
-if(dragKind==='items'){
-  if(!groupDragAnchor || !groupInitials) return;
-  const dx = w.x - groupDragAnchor.x;
-  const dy = w.y - groupDragAnchor.y;
+  if(dragKind==='items'){
+    if(!groupDragAnchor || !groupInitials) return;
+    const dx = w.x - groupDragAnchor.x;
+    const dy = w.y - groupDragAnchor.y;
 
-  for(const s of groupInitials){
-    const it = items[s.idx];
-    if(it.locked || !it.visible) continue;
+    for(const s of groupInitials){
+      const it=items[s.idx]; if(it.locked || !it.visible) continue;
 
-    const nx = snapCoord(s.x0 + dx);
-    const ny = snapCoord(s.y0 + dy);
+      const nx = snapCoord(s.x0 + dx);
+      const ny = snapCoord(s.y0 + dy);
 
-    const key = nearestKeyAtTime(it, tNow);
-    if(key){ key.x = nx; key.y = ny; }
+      const key = nearestKeyAtTime(it, tNow);
+      if(key){ key.x = nx; key.y = ny; }
+    }
+    draw();
+    return;
   }
-  draw();
-}
-
 });
+
 window.addEventListener('mouseup',()=>{
   dragging=false; dragIdx=-1; panning=false; panPrev=null;
   if(marqueeOn){ marqueeOn=false; marqueeEl.style.display='none'; }
-
-  // ★追加：グループドラッグ用の一時データをクリア
+  // ★クリア
   groupDragAnchor = null;
   groupInitials = null;
 });
 
 window.addEventListener('keydown',e=>{ if(e.code==='Space'){ spaceDown=true; e.preventDefault(); }});
 window.addEventListener('keyup',e=>{ if(e.code==='Space'){ spaceDown=false; }});
+
 canvas.addEventListener('wheel',e=>{
   const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
   const before=screenToWorld(p);
@@ -848,7 +837,6 @@ document.getElementById('addCircleBtn').onclick=()=>{ pushUndo(); const x=W*0.2+
 document.getElementById('addRectBtn').onclick=()=>{ pushUndo(); const x=W*0.3, y=H*0.5; items.push({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:20,w:200,h:120,alpha:1,rotation:0,pos:{x,y},r:40,text:'',keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
 document.getElementById('addTriangleBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; items.push({type:'triangle',name:'△',fill:'#10b981',stroke:'#065f46',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},text:'△',keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
 document.getElementById('addTextRectBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; const text=prompt('枠内テキスト（改行可）','サンプル\nテキスト')||'テキスト'; items.push({type:'textRect',name:'T',fill:'#ffffff',stroke:'#111111',textColor:'#111111',font:"'Noto Sans JP', system-ui",fontSize:20,w:240,h:140,alpha:1,rotation:0,pos:{x,y},r:18,text,keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); };
-// 画像追加
 document.getElementById('addImageBtn').onclick=()=>{
   const input=document.getElementById('imgInput');
   if(!input.files || !input.files.length){ alert('画像ファイルを選択してください。'); return; }
@@ -860,7 +848,7 @@ document.getElementById('addImageBtn').onclick=()=>{
     img.onload=()=>{
       pushUndo();
       const x=W*0.5, y=H*0.5;
-      const baseW=Math.min(400, img.width); // とりあえず見やすい初期サイズ
+      const baseW=Math.min(400, img.width);
       const scale = baseW / img.width;
       const baseH=Math.max(10, Math.round(img.height * scale));
       items.push({
@@ -910,7 +898,6 @@ window.addEventListener('keydown',(e)=>{
     const idx=firstSelected(); if(idx>=0){
       const it=items[idx];
       const obj = deepCopy(it);
-      // 画像は dataURL を保持
       if(it.type==='image' && it.imageSrc){ obj.imageSrc = it.imageSrc; }
       clipItem=obj;
     }
@@ -923,7 +910,6 @@ window.addEventListener('keydown',(e)=>{
       const cp=deepCopy(clipItem);
       cp.locked=false; cp.visible=true;
       cp.name = (cp.name||'Item')+'*';
-      // 画像復元
       if(cp.type==='image' && cp.imageSrc){
         const img=new Image(); img.src=cp.imageSrc; cp.image=img;
       }
@@ -975,8 +961,72 @@ const expEnd=document.getElementById('expEnd');
 function makeOffscreen(scale){ const off=document.createElement('canvas'); off.width=Math.round(W*scale); off.height=Math.round(H*scale); return off; }
 exportBtn.onclick=async ()=>{ if(typeof GIF==='undefined'){ alert('GIF.js を読み込めませんでした。ネット接続またはCDNの許可をご確認ください。'); return; } const fps=Math.max(1, Math.min(60, parseInt(expFps.value,10)||20)); const scale=Math.max(0.25, Math.min(2, parseFloat(expScale.value)||1)); let t0=Math.max(0, parseFloat(expStart.value)||0); let t1=Math.max(0, parseFloat(expEnd.value)||duration); if(t1<t0){ const tmp=t0; t0=t1; t1=tmp; } t0=Math.max(0, Math.min(duration, t0)); t1=Math.max(0, Math.min(duration, t1)); const totalFrames = Math.max(1, Math.round((t1 - t0) * fps) + 1); isPlaying=false; exportBtn.disabled=true; exportStatus.textContent=`レンダリング準備 (${totalFrames} frames)`; exportProgress.value=0; exportProgress.max=totalFrames; const off=makeOffscreen(scale); const octx=off.getContext('2d'); const gif=new GIF({workers:2, quality:10, workerScript:'https://unpkg.com/gif.js@0.2.0/dist/gif.worker.js'}); let savedView={...view}; let savedT=tNow; try{ for(let i=0;i<totalFrames;i++){ const tt = t0 + (i/(totalFrames-1))*(t1-t0); tNow=tt; updateTimeLabel(); const prevView={...view}; setView(1,0,0); draw(); view=prevView; octx.setTransform(1,0,0,1,0,0); octx.clearRect(0,0,off.width,off.height); octx.drawImage(canvas, 0,0, off.width, off.height); gif.addFrame(octx, {copy:true, delay: Math.round(1000/fps)}); if(i%5===0){ exportStatus.textContent=`フレーム ${i+1}/${totalFrames}`; } exportProgress.value=i+1; await new Promise(r=>setTimeout(r,0)); } }catch(e){ console.error('Export error', e); alert('書き出し中にエラーが発生しました: '+e.message); tNow=savedT; view=savedView; updateTimeLabel(); draw(); drawTimeline(); exportBtn.disabled=false; exportStatus.textContent='失敗'; return; } gif.on('finished', (blob)=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='animation.gif'; a.click(); tNow=savedT; view=savedView; updateTimeLabel(); draw(); drawTimeline(); exportBtn.disabled=false; exportStatus.textContent='完了'; }); exportStatus.textContent='エンコード中…'; gif.render(); };
 
+// ====== プロジェクト セーブ/ロード ======
+const LS_KEY = 'dragpath_gif_animator_project_v1';
+function serializeProject(){
+  const s = cloneState();
+  s.meta = { savedAt: new Date().toISOString(), app:'Drag-Path GIF Animator', version:1 };
+  return JSON.stringify(s);
+}
+function deserializeProject(jsonStr){
+  const data = JSON.parse(jsonStr);
+  if(!data || !data.items || !Array.isArray(data.items)) throw new Error('プロジェクト形式が不正です');
+  return data;
+}
+function saveToLocal(){
+  try{ const json = serializeProject(); localStorage.setItem(LS_KEY, json); toast('保存しました（ブラウザ内）'); }
+  catch(e){ alert('保存に失敗しました: '+e.message); }
+}
+function loadFromLocal(){
+  try{ const json = localStorage.getItem(LS_KEY); if(!json){ alert('保存データが見つかりません'); return; }
+    const data = deserializeProject(json); restoreState(data); toast('読み込み完了'); }
+  catch(e){ alert('読み込みに失敗しました: '+e.message); }
+}
+function downloadJson(){
+  try{ const json = serializeProject(); const blob = new Blob([json], {type:'application/json'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    const dt = new Date().toISOString().replace(/[:.]/g,'-'); a.download = `gif_animator_project_${dt}.json`; a.click(); URL.revokeObjectURL(a.href); toast('JSONダウンロード開始'); }
+  catch(e){ alert('ダウンロードに失敗しました: '+e.message); }
+}
+function uploadJson(file){
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{ const data = deserializeProject(e.target.result); restoreState(data); toast('JSONから読み込み完了'); }
+    catch(err){ alert('JSONの読み込みに失敗: '+err.message); }
+  };
+  reader.readAsText(file);
+}
+let toastTimer=null;
+function toast(msg){
+  let el = document.getElementById('toast');
+  if(!el){
+    el = document.createElement('div'); el.id='toast';
+    el.style.position='fixed'; el.style.top='10px'; el.style.left='50%'; el.style.transform='translateX(-50%)';
+    el.style.background='#111827'; el.style.color='#fff'; el.style.padding='6px 10px'; el.style.borderRadius='8px';
+    el.style.fontSize='12px'; el.style.boxShadow='0 2px 10px rgba(0,0,0,.2)'; el.style.transition='opacity .2s'; el.style.opacity='0';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg; el.style.opacity='1';
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>{ el.style.opacity='0'; }, 1400);
+}
+document.getElementById('saveLocalBtn').onclick = saveToLocal;
+document.getElementById('loadLocalBtn').onclick = loadFromLocal;
+document.getElementById('downloadBtn').onclick = downloadJson;
+document.getElementById('uploadJson').addEventListener('change', (e)=>{
+  const f = e.target.files && e.target.files[0];
+  if(f) uploadJson(f);
+});
+const autosaveChk = document.getElementById('autosaveOn');
+let autosaveTimer = null;
+function scheduleAutosave(){
+  if(!autosaveChk.checked) return;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(()=>{ try{ saveToLocal(); }catch(_){} }, 2500);
+}
+window.addEventListener('beforeunload', ()=>{ try{ if(autosaveChk.checked) saveToLocal(); }catch(_){ } });
+
 // ====== 初期化 ======
-function init(){ const mw=document.querySelector('main')?.clientWidth||1200; TL.width=Math.min(1200, mw-24); fitToFrame(); updateSizeMax(); updateTimeLabel(); syncPropPanel(); resizeTL(); document.getElementById('expEnd').value=String(duration); document.getElementById('canvasW').value=String(canvas.width); document.getElementById('canvasH').value=String(canvas.height); document.getElementById('frameW').value=String(W); document.getElementById('frameH').value=String(H); document.getElementById('showTargets').checked=showTargets; document.getElementById('showItems').checked=showItems; document.getElementById('lockTargets').checked=targetsLocked; draw(); }
+function init(){ const mw=document.querySelector('main')?.clientWidth||1200; TL.width=Math.min(1200, mw-24); fitToFrame(); updateSizeMax(); updateTimeLabel(); syncPropPanel(); resizeTL(); document.getElementById('expEnd').value=String(duration); document.getElementById('canvasW').value=String(canvas.width); document.getElementById('canvasH').value=String(canvas.height); document.getElementById('frameW').value=String(W); document.getElementById('frameH').value=String(H); document.getElementById('showTargets').checked=showTargets; document.getElementById('showItems').checked=showItems; document.getElementById('lockTargets').checked=targetsLocked; draw(); scheduleAutosave(); }
 init();
 
 function undo(){ if(!undoStack.length) return; const cur=cloneState(); const prev=undoStack.pop(); redoStack.push(cur); restoreState(prev); }
@@ -991,141 +1041,6 @@ function redo(){ if(!redoStack.length) return; const cur=cloneState(); const nex
   console.log('[Tests] OK');
 }catch(e){ console.error('[Tests] FAIL',e); }})();
 }); // DOMContentLoaded
-
-  // ====== プロジェクト セーブ/ロード ======
-// 既存の cloneState()/restoreState()/reviveImages() を利用します。
-// - ローカル保存キー
-const LS_KEY = 'dragpath_gif_animator_project_v1';
-
-// セーブに含める追加メタ（任意）
-function serializeProject(){
-  const s = cloneState();
-  // 追加で現在の設定も保存（必要に応じて）
-  s.meta = {
-    savedAt: new Date().toISOString(),
-    app: 'Drag-Path GIF Animator',
-    version: 1
-  };
-  return JSON.stringify(s);
-}
-
-function deserializeProject(jsonStr){
-  const data = JSON.parse(jsonStr);
-  // 後方互換のため存在チェック
-  if(!data || !data.items || !Array.isArray(data.items)) throw new Error('プロジェクト形式が不正です');
-  return data;
-}
-
-// ブラウザ保存/読込（localStorage）
-function saveToLocal(){
-  try{
-    const json = serializeProject();
-    localStorage.setItem(LS_KEY, json);
-    toast('保存しました（ブラウザ内）');
-  }catch(e){
-    alert('保存に失敗しました: '+e.message);
-  }
-}
-function loadFromLocal(){
-  try{
-    const json = localStorage.getItem(LS_KEY);
-    if(!json){ alert('保存データが見つかりません'); return; }
-    const data = deserializeProject(json);
-    restoreState(data);
-    toast('読み込み完了');
-  }catch(e){
-    alert('読み込みに失敗しました: '+e.message);
-  }
-}
-
-// JSONダウンロード/アップロード
-function downloadJson(){
-  try{
-    const json = serializeProject();
-    const blob = new Blob([json], {type:'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    const dt = new Date().toISOString().replace(/[:.]/g,'-');
-    a.download = `gif_animator_project_${dt}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast('JSONダウンロードを開始しました');
-  }catch(e){
-    alert('ダウンロードに失敗しました: '+e.message);
-  }
-}
-function uploadJson(file){
-  const reader = new FileReader();
-  reader.onload = e=>{
-    try{
-      const data = deserializeProject(e.target.result);
-      restoreState(data);
-      toast('JSONから読み込み完了');
-    }catch(err){
-      alert('JSONの読み込みに失敗: '+err.message);
-    }
-  };
-  reader.readAsText(file);
-}
-
-// 簡易トースト（上部に一瞬出す）
-let toastTimer=null;
-function toast(msg){
-  let el = document.getElementById('toast');
-  if(!el){
-    el = document.createElement('div');
-    el.id = 'toast';
-    el.style.position='fixed';
-    el.style.top='10px';
-    el.style.left='50%';
-    el.style.transform='translateX(-50%)';
-    el.style.background='#111827';
-    el.style.color='#fff';
-    el.style.padding='6px 10px';
-    el.style.borderRadius='8px';
-    el.style.fontSize='12px';
-    el.style.boxShadow='0 2px 10px rgba(0,0,0,.2)';
-    document.body.appendChild(el);
-  }
-  el.textContent = msg;
-  el.style.opacity='1';
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=>{ el.style.opacity='0'; }, 1400);
-}
-
-// ボタンと入力にイベントを付与
-document.getElementById('saveLocalBtn').onclick = saveToLocal;
-document.getElementById('loadLocalBtn').onclick = loadFromLocal;
-document.getElementById('downloadBtn').onclick = downloadJson;
-document.getElementById('uploadJson').addEventListener('change', (e)=>{
-  const f = e.target.files && e.target.files[0];
-  if(f) uploadJson(f);
-});
-
-// ====== 自動セーブ（数秒おき & 操作時） ======
-const autosaveChk = document.getElementById('autosaveOn');
-let autosaveTimer = null;
-function scheduleAutosave(){
-  if(!autosaveChk.checked) return;
-  clearTimeout(autosaveTimer);
-  autosaveTimer = setTimeout(()=>{ try{ saveToLocal(); }catch(_){} }, 2500);
-}
-// 操作系の代表箇所で呼ぶ（Undo記録直後など）
-const _origPushUndo = pushUndo;
-pushUndo = function(){
-  _origPushUndo();
-  scheduleAutosave();
-};
-
-// 初期表示時にも一度セーブ（初期状態の復帰を可能に）
-scheduleAutosave();
-
-// ページ離脱時にも念のため
-window.addEventListener('beforeunload', ()=>{
-  try{ if(autosaveChk.checked) saveToLocal(); }catch(_){}
-});
-
 </script>
-  
 </body>
 </html>
