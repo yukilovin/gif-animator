@@ -255,6 +255,7 @@ function xToT(x){ const pad=80; const w=TL.width-pad-16; const vd=viewDur(); ret
 function ensureTimelineCanvasHeight(){ const need=laneTop + items.length*(laneH+laneGap) + 24; if(TL.height!==need){ TL.height=need; } }
 
 // ====== スナップ ======
+function snapDelta(d){ return posSnap ? Math.round(d/posGrid)*posGrid : d; }
 let snapOn=true, snapStep=0.10;
 let posSnap=true, posGrid=10;
 function applySnap(t){ if(!snapOn) return clamp01(t,0,duration); const s=Math.round(t/Math.max(0.01,snapStep))*Math.max(0.01,snapStep); return clamp01(+s.toFixed(6),0,duration); }
@@ -625,8 +626,9 @@ canvas.addEventListener('mousemove',e=>{
     for(const s of groupInitials){
       const it=items[s.idx]; if(it.locked || !it.visible) continue;
 
-      const nx = snapCoord(s.x0 + dx);
-      const ny = snapCoord(s.y0 + dy);
+      const nx = s.x0 + snapDelta(dx);
+      const ny = s.y0 + snapDelta(dy);
+
 
       const key = nearestKeyAtTime(it, tNow);
       if(key){ key.x = nx; key.y = ny; }
