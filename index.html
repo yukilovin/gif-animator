@@ -553,6 +553,10 @@ TL.addEventListener('wheel',e=>{
 let dragging=false, dragKind='item', dragIdx=-1, dragOff={x:0,y:0};
 let marqueeOn=false, marqueeStart=null;
 
+// ★追加：グループドラッグ用の基準点＆初期座標
+let groupDragAnchor = null;          // {x,y} クリック時のワールド座標
+let groupInitials = null;            // [{idx, x0, y0}] 選択アイテムの初期位置
+
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('mousedown',e=>{
   const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
@@ -579,23 +583,35 @@ canvas.addEventListener('mousedown',e=>{
   }
 
   // 2) アイテム判定（前面優先）
-  for(let i=items.length-1;i>=0;i--){
-    const it=items[i];
-    if(!showItems || !it.visible) continue;
-    if(it.locked) continue;
-    if(hitItem(it,w)){
-      pushUndo();
-      if(add){ if(isSelected(i)) selected.delete(i); else selected.add(i); }
-      else { setActive(i,false); }
-      dragKind='items'; dragging=true; dragOff=[...selected].map(idx=>{
-        const st=getStateAtTime(items[idx], tNow);
-        return {idx, offX:w.x - st.x, offY:w.y - st.y};
-      });
-      for(const s of dragOff){ ensureKeyAtNow(items[s.idx]); }
-      syncPropPanel(); draw();
-      return;
-    }
+for(let i=items.length-1;i>=0;i--){
+  const it=items[i];
+  if(!showItems || !it.visible) continue;
+  if(it.locked) continue;
+  if(hitItem(it,w)){
+    pushUndo();
+
+    // 選択状態の更新（従来通り）
+    if(add){ if(isSelected(i)) selected.delete(i); else selected.add(i); }
+    else { setActive(i,false); }
+
+    // ★変更点：グループドラッグのアンカー＆初期座標を採取
+    groupDragAnchor = { x: w.x, y: w.y };
+    groupInitials = [...selected].map(idx=>{
+      const st=getStateAtTime(items[idx], tNow);
+      return { idx, x0: st.x, y0: st.y };
+    });
+
+    // すべての対象に現在時刻キーを確保
+    for(const s of groupInitials){ ensureKeyAtNow(items[s.idx]); }
+
+    dragKind='items';
+    dragging=true;
+
+    syncPropPanel(); draw();
+    return;
   }
+}
+
 
   // 3) マルキー開始
   marqueeOn=true; marqueeStart=p; updateMarquee(p,p);
@@ -612,21 +628,34 @@ canvas.addEventListener('mousemove',e=>{
   if(dragKind==='target'){
     const t=targets[dragIdx]; t.x=snapCoord(w.x-dragOff.x); t.y=snapCoord(w.y-dragOff.y); draw(); return;
   }
-  if(dragKind==='items'){
-    for(const s of dragOff){
-      const it=items[s.idx]; if(it.locked || !it.visible) continue;
-      const nx=snapCoord(w.x - s.offX);
-      const ny=snapCoord(w.y - s.offY);
-      const key=nearestKeyAtTime(it,tNow);
-      if(key){ key.x=nx; key.y=ny; }
-    }
-    draw();
+if(dragKind==='items'){
+  if(!groupDragAnchor || !groupInitials) return;
+  const dx = w.x - groupDragAnchor.x;
+  const dy = w.y - groupDragAnchor.y;
+
+  for(const s of groupInitials){
+    const it = items[s.idx];
+    if(it.locked || !it.visible) continue;
+
+    const nx = snapCoord(s.x0 + dx);
+    const ny = snapCoord(s.y0 + dy);
+
+    const key = nearestKeyAtTime(it, tNow);
+    if(key){ key.x = nx; key.y = ny; }
   }
+  draw();
+}
+
 });
 window.addEventListener('mouseup',()=>{
   dragging=false; dragIdx=-1; panning=false; panPrev=null;
   if(marqueeOn){ marqueeOn=false; marqueeEl.style.display='none'; }
+
+  // ★追加：グループドラッグ用の一時データをクリア
+  groupDragAnchor = null;
+  groupInitials = null;
 });
+
 window.addEventListener('keydown',e=>{ if(e.code==='Space'){ spaceDown=true; e.preventDefault(); }});
 window.addEventListener('keyup',e=>{ if(e.code==='Space'){ spaceDown=false; }});
 canvas.addEventListener('wheel',e=>{
