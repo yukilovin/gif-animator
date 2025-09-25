@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>GIF Animator（ズレ修正版）</title>
+<title>GIF Animator（ズレ修正版＋マルキー選択）</title>
 <style>
   body{margin:0;background:#fff;color:#111827;font-family:sans-serif;height:100vh;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px;box-sizing:border-box}
   aside{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;overflow:auto}
@@ -30,8 +30,9 @@ window.addEventListener('DOMContentLoaded',()=>{
 'use strict';
 const canvas=document.getElementById('canvas');
 const ctx=canvas.getContext('2d');
+const marqueeEl=document.getElementById('marquee');
 
-// === マウス座標を正規化する関数 ===
+// === 画面座標 -> キャンバス座標 ===
 function getPointer(evt){
   const rect = canvas.getBoundingClientRect();
   const cssX = evt.clientX - rect.left;
@@ -40,16 +41,29 @@ function getPointer(evt){
   const scaleY = canvas.height / rect.height;
   return { x: cssX * scaleX, y: cssY * scaleY };
 }
+function cssToCanvas(px, py){
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return { x:(px-rect.left)*scaleX, y:(py-rect.top)*scaleY };
+}
 
-// === スナップ関連 ===
+// === スナップ ===
 let posSnap=true, posGrid=10;
-function snapCoord(v){ return posSnap ? Math.round(v/posGrid)*posGrid : v; }
 function snapDelta(d){ return posSnap ? Math.round(d/posGrid)*posGrid : d; }
 
-// === テスト用アイテム ===
-let items=[{x:200,y:200,r:40,locked:false}];
+// === アイテム（複数でもOK） ===
+let items=[
+  {x:200,y:200,r:40,locked:false},
+  {x:360,y:260,r:40,locked:false}
+];
+
 let selected=new Set();
-let dragging=false, dragKind=null, dragOff=null, groupDragAnchor=null, groupInitials=null;
+let dragging=false, dragKind=null, groupDragAnchor=null, groupInitials=null;
+
+// ★ マルキー（範囲選択）用
+let marqueeOn=false;
+let marqueeStartCss=null; // CSSピクセルでの開始点
 
 function draw(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -64,33 +78,88 @@ function draw(){
   }
 }
 
+// === 当たり判定（円）
+function hitIndexAt(p){
+  for(let i=items.length-1;i>=0;i--){
+    const it=items[i], dx=p.x-it.x, dy=p.y-it.y;
+    if(dx*dx+dy*dy<=it.r*it.r) return i;
+  }
+  return -1;
+}
+
+// === マルキー矩形で選択更新
+function updateMarqueeSelection(curCssX, curCssY){
+  const x1 = marqueeStartCss.x, y1 = marqueeStartCss.y;
+  const x2 = curCssX,           y2 = curCssY;
+  const minCssX = Math.min(x1,x2), minCssY = Math.min(y1,y2);
+  const maxCssX = Math.max(x1,x2), maxCssY = Math.max(y1,y2);
+  const p1 = cssToCanvas(minCssX, minCssY);
+  const p2 = cssToCanvas(maxCssX, maxCssY);
+
+  selected.clear();
+  for(let i=0;i<items.length;i++){
+    const it=items[i];
+    if(it.x>=p1.x && it.x<=p2.x && it.y>=p1.y && it.y<=p2.y) selected.add(i);
+  }
+  draw();
+}
+
 // === mousedown ===
 canvas.addEventListener('mousedown',e=>{
   const p=getPointer(e);
-  // アイテムヒット
-  for(let i=items.length-1;i>=0;i--){
-    const it=items[i];
-    const dx=p.x-it.x, dy=p.y-it.y;
-    if(dx*dx+dy*dy<=it.r*it.r){
-      selected=new Set([i]);
-      dragging=true; dragKind='items';
-      groupDragAnchor={x:p.x,y:p.y};
-      groupInitials=[...selected].map(idx=>{
-        const it=items[idx];
-        return {idx, x0:it.x, y0:it.y};
-      });
-      draw();
-      return;
+  const hit = hitIndexAt(p);
+
+  if(hit>=0){
+    // Ctrl/⌘ でトグル選択、無ければ単独選択
+    if(e.ctrlKey||e.metaKey){
+      if(selected.has(hit)) selected.delete(hit); else selected.add(hit);
+    }else{
+      selected = new Set([hit]);
     }
+
+    // クリック地点を握ってドラッグ
+    dragging=true; dragKind='items';
+    groupDragAnchor={x:p.x,y:p.y};
+    groupInitials=[...selected].map(idx=>{
+      const it=items[idx];
+      return {idx, x0:it.x, y0:it.y};
+    });
+    draw();
+    return;
   }
-  selected.clear(); draw();
+
+  // 空白：マルキー開始（CSS基準で矩形を表示）
+  marqueeOn = true;
+  marqueeStartCss = { x: e.clientX, y: e.clientY };
+  marqueeEl.style.display = 'block';
+  marqueeEl.style.left = `${e.clientX}px`;
+  marqueeEl.style.top  = `${e.clientY}px`;
+  marqueeEl.style.width = '0px';
+  marqueeEl.style.height= '0px';
+  updateMarqueeSelection(e.clientX, e.clientY);
 });
 
 // === mousemove ===
 canvas.addEventListener('mousemove',e=>{
-  if(!dragging||!groupDragAnchor) return;
+  // マルキー中は矩形更新＆選択更新
+  if(marqueeOn && marqueeStartCss){
+    const x1 = marqueeStartCss.x, y1 = marqueeStartCss.y;
+    const x2 = e.clientX,        y2 = e.clientY;
+    const left = Math.min(x1,x2), top = Math.min(y1,y2);
+    const w = Math.abs(x2-x1),   h   = Math.abs(y2-y1);
+    marqueeEl.style.left = `${left}px`;
+    marqueeEl.style.top  = `${top}px`;
+    marqueeEl.style.width = `${w}px`;
+    marqueeEl.style.height= `${h}px`;
+    updateMarqueeSelection(x2, y2);
+    return;
+  }
+
+  // アイテムを掴んでいるとき
+  if(!dragging || !groupDragAnchor) return;
   const p=getPointer(e);
   const dx=p.x-groupDragAnchor.x, dy=p.y-groupDragAnchor.y;
+
   for(const s of groupInitials){
     const it=items[s.idx];
     it.x = s.x0 + snapDelta(dx);
@@ -101,6 +170,11 @@ canvas.addEventListener('mousemove',e=>{
 
 // === mouseup ===
 window.addEventListener('mouseup',()=>{
+  if(marqueeOn){
+    marqueeOn=false;
+    marqueeStartCss=null;
+    marqueeEl.style.display='none';
+  }
   dragging=false; dragKind=null; groupDragAnchor=null; groupInitials=null;
 });
 
