@@ -114,6 +114,11 @@
         <label>回転(°) <input id="propRotation" type="number" value="0" min="0" max="360"></label>
         <label style="margin-left:12px"><input type="checkbox" id="propLocked"> ロック</label>
       </div>
+      <div class="row">
+  <label>ScaleX <input id="propScaleX" type="number" value="1" step="0.1" min="0.1" max="10"></label>
+  <label>ScaleY <input id="propScaleY" type="number" value="1" step="0.1" min="0.1" max="10"></label>
+  <label style="margin-left:8px"><input type="checkbox" id="lockUniform"> 等倍比</label>
+</div>
       <div class="row"><button class="btn" id="applyProps">適用</button></div>
     </div>
 
@@ -282,6 +287,36 @@ let targets=[];
 /** item: {type, name, fill, stroke, textColor, font, fontSize, r, w, h, text, alpha, rotation, pos:{x,y}, keys:[{t,x,y,rot}], locked?:boolean, visible?:boolean, image?:HTMLImageElement, imageSrc?:string} */
 let items=[]; // 初期は空
 
+  // ▼ 既存 items 配列を使っている箇所の直後あたりに入れる（既存分へ既定値補完）
+function ensureScaleDefaults() {
+  for (const it of items) {
+    if (it.scaleX == null) it.scaleX = 1;
+    if (it.scaleY == null) it.scaleY = 1;
+  }
+}
+ensureScaleDefaults();
+
+// ▼ 新規作成系（addIconBtn / addCircleBtn / ... / addImageBtn）で追加するプロパティ
+// 例：アイコン作成時
+items.push({
+  type:'icon', name,
+  fill:'#9ca3af', stroke:'#111', textColor:'#fff',
+  font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize:20,
+  r:40, alpha:1, rotation:0, w:80, h:80, text:'',
+  scaleX:1, scaleY:1,              // ★ 追加
+  pos:{x,y}, keys:[{t:0,x,y,rot:0}], locked:false, visible:true
+});
+
+// 画像作成時も同様に
+items.push({
+  type:'image', name:file.name||'image',
+  image:img, imageSrc:dataUrl,
+  w:baseW, h:baseH, alpha:1, rotation:0,
+  scaleX:1, scaleY:1,              // ★ 追加
+  pos:{x,y}, keys:[{t:0,x,y,rot:0}], locked:false, visible:true
+});
+
+
 // 選択（複数）
 let selected=new Set();
 function setActive(i, add=false){ if(!add){ selected.clear(); } if(i>=0 && i<items.length) selected.add(i); }
@@ -361,7 +396,11 @@ function drawItem(it, pos, i){
   ctx.globalAlpha = it.alpha==null?1:it.alpha;
 
   const angle = (pos.rot||0) * Math.PI/180;
-  ctx.translate(pos.x, pos.y); ctx.rotate(angle); ctx.translate(-pos.x, -pos.y);
+  ctx.translate(pos.x, pos.y); ctx.rotate(angle);  ctx.translate(pos.x, pos.y);
+  ctx.rotate((pos.rot||0) * Math.PI/180);
++ ctx.scale(it.scaleX ?? 1, it.scaleY ?? 1);   // ★追加：回転後にスケール
+  ctx.translate(-pos.x, -pos.y);
+ ctx.translate(-pos.x, -pos.y);
 
   if(it.type==='icon'||it.type==='circle'){
     const r=it.r||40;
@@ -708,15 +747,30 @@ function updateMarqueeSelection(curCssX, curCssY){
   syncPropPanel(); draw();
 }
 
-// 当たり判定（回転は近似無視）
-function hitItem(it,w){
-  const st=getStateAtTime(it,tNow);
-  if(it.type==='icon'||it.type==='circle'||it.type==='triangle'){
-    const r=it.r||40; const dx=w.x-st.x,dy=w.y-st.y; return (dx*dx+dy*dy<=r*r);
+// 置き換え：スケール考慮のヒットテスト（回転は近似無視）
+function hitItem(it, w){
+  // 現在時刻 tNow の見た目位置・回転を取得
+  const st = getStateAtTime ? getStateAtTime(it, tNow) : { x: it.x, y: it.y, rot: it.rotation||0 };
+
+  // アイテム個別スケール（未設定は1）
+  const sx = it.scaleX ?? 1;
+  const sy = it.scaleY ?? 1;
+
+  if(it.type==='icon' || it.type==='circle' || it.type==='triangle'){
+    // 円系は外接円で近似：最大スケールで半径を拡大
+    const baseR = it.r || 40;
+    const r = baseR * Math.max(sx, sy);
+    const dx = w.x - st.x, dy = w.y - st.y;
+    return (dx*dx + dy*dy <= r*r);
   } else {
-    const hw=(it.w||160)/2, hh=(it.h||90)/2; return (Math.abs(w.x-st.x)<=hw && Math.abs(w.y-st.y)<=hh);
+    // 矩形・テキスト枠・画像：拡大後の半幅/半高で判定（回転は近似無視）
+    const baseW = it.w || 160, baseH = it.h || 90;
+    const hw = (baseW / 2) * sx;
+    const hh = (baseH / 2) * sy;
+    return (Math.abs(w.x - st.x) <= hw && Math.abs(w.y - st.y) <= hh);
   }
 }
+
 
 // ====== プロパティパネル ======
 const propName=document.getElementById('propName');
@@ -738,6 +792,9 @@ const posSnapOn=document.getElementById('posSnapOn');
 const posSnapGrid=document.getElementById('posSnapGrid');
 const propLocked=document.getElementById('propLocked');
 const lockBadge=document.getElementById('lockBadge');
+  const propScaleX = document.getElementById('propScaleX');
+const propScaleY = document.getElementById('propScaleY');
+const lockUniform = document.getElementById('lockUniform');
 
 function setBadge(locked){
   lockBadge.textContent = locked ? '🔒 ロック中' : '🔓 未ロック';
@@ -757,6 +814,8 @@ function syncPropPanel(){
   propStroke.value=it.stroke||'#111111'; propTextColor.value=it.textColor||'#111111';
   propFont.value=it.font||'system-ui'; propFontSize.value=it.fontSize||20;
   propRotation.value=st.rot ?? (it.rotation||0);
+    propScaleX.value = (it.scaleX ?? 1);
+  propScaleY.value = (it.scaleY ?? 1);
   posSnapOn.checked = !!posSnap; posSnapGrid.value = posGrid;
   propLocked.checked = !!it.locked; setBadge(!!it.locked);
 }
@@ -765,6 +824,27 @@ document.getElementById('applyProps').onclick=()=>{
   const idx=firstSelected(); if(idx<0) return;
   const it=items[idx]; if(it.locked){ alert('このアイテムはロック中です。'); return; }
   pushUndo();
+   // …既存：位置/サイズ/色/テキストなど…
+
+  it.rotation = parseFloat(propRotation.value)||0;
+  k.rot = it.rotation;
+
+  // ★ここから追加：スケール
+  let sx = parseFloat(propScaleX.value);
+  let sy = parseFloat(propScaleY.value);
+  if(!Number.isFinite(sx) || sx<=0) sx = 1;
+  if(!Number.isFinite(sy) || sy<=0) sy = 1;
+
+  if (lockUniform && lockUniform.checked) sy = sx;
+
+  // ガード
+  sx = Math.max(0.1, Math.min(10, sx));
+  sy = Math.max(0.1, Math.min(10, sy));
+
+  it.scaleX = sx;
+  it.scaleY = sy;
+  // ★ここまで
+
   const maxR=Math.min(W,H)/2;
 
   ensureKeyAtNow(it);
