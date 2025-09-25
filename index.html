@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Drag‑Path GIF Animator — 複数選択修正・画像/色/透明度・Undo・ロック・保存</title>
+<title>Drag-Path GIF Animator — 複数選択修正/画像/色/透明度/Undo/ロック/保存</title>
 <style>
   body{margin:0;background:#ffffff;color:#111827;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;height:100vh;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px;box-sizing:border-box}
   aside{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;overflow:auto}
   main{display:flex;flex-direction:column;align-items:center}
-  #canvas{background:#ffffff;border:2px solid #000;touch-action:none;display:block;margin-top:10px}
+  #canvas{background:#fff;border:2px solid #000;touch-action:none;display:block;margin-top:10px}
   #timelineWrap{width:100%;max-width:1200px;margin-top:12px;padding:6px;background:#f3f4f6;border-radius:8px;border:1px solid #d1d5db;resize:vertical;overflow:auto;min-height:160px;max-height:40vh}
   #timeline{width:100%;display:block;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb}
   .timeline-header{display:flex;gap:8px;align-items:center;justify-content:space-between;font-size:14px;font-weight:bold;color:#111827;margin-bottom:6px}
@@ -232,8 +232,21 @@ const timeLabel=document.getElementById('timeLabel');
 const coordReadout=document.getElementById('coordReadout');
 const marqueeEl=document.getElementById('marquee');
 
-let W=1080,H=1080; // 枠＝GIF解像度（黒枠）
-let CW=canvas.width, CH=canvas.height; // 作業キャンバス
+// ===== 座標変換（CSS→Canvas→World） =====
+function getPointer(evt){
+  const rect = canvas.getBoundingClientRect();
+  const cssX = evt.clientX - rect.left;
+  const cssY = evt.clientY - rect.top;
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return { x: cssX * scaleX, y: cssY * scaleY }; // Canvas座標
+}
+function cssToCanvas(px, py){
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return { x:(px-rect.left)*scaleX, y:(py-rect.top)*scaleY };
+}
 
 // ====== 時間管理 ======
 let duration=8; let tNow=0; let isPlaying=false; let lastTs=0;
@@ -242,9 +255,9 @@ function updateTimeLabel(){ timeLabel.textContent=tNow.toFixed(2); }
 // ====== ビュー（ズーム/パン） ======
 const MIN_S=0.3, MAX_S=4; let view={scale:1,x:0,y:0}; let panning=false, panPrev=null, spaceDown=false;
 function setView(scale,x,y){ view.scale=Math.max(MIN_S,Math.min(MAX_S,scale)); view.x=x; view.y=y; draw(); }
-function screenToWorld(p){ return {x:(p.x-view.x)/view.scale, y:(p.y-view.y)/view.scale}; }
+function screenToWorld(p/*Canvas座標*/){ return {x:(p.x-view.x)/view.scale, y:(p.y-view.y)/view.scale}; }
 
-// ====== タイムライン ======
+// ====== TL ======
 let tlZoom=1, tlStart=0; const laneH=24,laneGap=12,laneTop=48;
 const ICON_W_LOCK=24, ICON_W_EYE=24, LEFT_PAD=12, NAME_X=LEFT_PAD+ICON_W_LOCK+ICON_W_EYE+8;
 function viewDur(){ return duration/Math.max(0.25,Math.min(4,tlZoom)); }
@@ -257,18 +270,19 @@ function ensureTimelineCanvasHeight(){ const need=laneTop + items.length*(laneH+
 let snapOn=true, snapStep=0.10;
 let posSnap=true, posGrid=10;
 function applySnap(t){ if(!snapOn) return clamp01(t,0,duration); const s=Math.round(t/Math.max(0.01,snapStep))*Math.max(0.01,snapStep); return clamp01(+s.toFixed(6),0,duration); }
+function snapDelta(d){ return posSnap ? Math.round(d/posGrid)*posGrid : d; }
 function snapCoord(v){ return posSnap ? Math.round(v/posGrid)*posGrid : v; }
 function clamp01(v,min,max){ return Math.max(min,Math.min(max,v)); }
 
-// ====== レイヤー表示/ロック（Targets は任意のため初期は空） ======
+// ====== レイヤー表示/ロック（Targetsは初期なし） ======
 let showTargets=false, showItems=true, targetsLocked=false;
-let targets=[]; // ← ABCD/1234 は初期から入れない
+let targets=[];
 
 // ====== アイテム ======
 /** item: {type, name, fill, stroke, textColor, font, fontSize, r, w, h, text, alpha, rotation, pos:{x,y}, keys:[{t,x,y,rot}], locked?:boolean, visible?:boolean, image?:HTMLImageElement, imageSrc?:string} */
-let items=[]; // ← D1〜D4 / MT/ST/H1/H2 は入れない
+let items=[]; // 初期は空
 
-// 選択状態（複数）
+// 選択（複数）
 let selected=new Set();
 function setActive(i, add=false){ if(!add){ selected.clear(); } if(i>=0 && i<items.length) selected.add(i); }
 function isSelected(i){ return selected.has(i); }
@@ -286,7 +300,11 @@ function cloneState(){
 }
 function reviveImages(arr){
   arr.forEach(it=>{
-    if(it.type==='image' && it.imageSrc){ const img = new Image(); img.src = it.imageSrc; it.image = img; }
+    if(it.type==='image' && it.imageSrc){
+      const img = new Image();
+      img.src = it.imageSrc;
+      it.image = img;
+    }
   });
 }
 function pushUndo(){ undoStack.push(cloneState()); if(undoStack.length>100) undoStack.shift(); redoStack.length=0; scheduleAutosave(); }
@@ -320,12 +338,17 @@ function getStateAtTime(it, t){
 }
 
 // ====== 描画 ======
+let W=1080,H=1080; // 枠＝GIF解像度
+let CW=canvas.width, CH=canvas.height; // 作業キャンバス
+
 function drawFrame(){ ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.setTransform(view.scale,0,0,view.scale,view.x,view.y); ctx.strokeStyle='#000'; ctx.lineWidth=3/view.scale; ctx.strokeRect(0.5,0.5,W-1,H-1); }
 function drawTargets(){
   if(!showTargets || !targets.length) return;
   ctx.textAlign='center'; ctx.textBaseline='middle';
   targets.forEach(t=>{
-    ctx.save(); ctx.globalAlpha = targetsLocked ? 0.7 : 1; ctx.fillStyle='#878787'; ctx.strokeStyle='#ffffff'; ctx.lineWidth=3/view.scale;
+    ctx.save();
+    ctx.globalAlpha = targetsLocked ? 0.7 : 1;
+    ctx.fillStyle='#878787'; ctx.strokeStyle='#ffffff'; ctx.lineWidth=3/view.scale;
     const R=50; ctx.beginPath(); ctx.arc(t.x,t.y,R,0,Math.PI*2); ctx.fill(); ctx.stroke();
     ctx.fillStyle='#ffffff'; ctx.font=(20/view.scale)+'px system-ui'; ctx.fillText(t.name||'T',t.x,t.y);
     ctx.restore();
@@ -333,51 +356,148 @@ function drawTargets(){
 }
 function drawItem(it, pos, i){
   if(!showItems || !it.visible) return;
-  const s=1/view.scale; ctx.save(); ctx.globalAlpha = it.alpha==null?1:it.alpha;
-  const angle = (pos.rot||0) * Math.PI/180; ctx.translate(pos.x, pos.y); ctx.rotate(angle); ctx.translate(-pos.x, -pos.y);
+  const s=1/view.scale;
+  ctx.save();
+  ctx.globalAlpha = it.alpha==null?1:it.alpha;
+
+  const angle = (pos.rot||0) * Math.PI/180;
+  ctx.translate(pos.x, pos.y); ctx.rotate(angle); ctx.translate(-pos.x, -pos.y);
 
   if(it.type==='icon'||it.type==='circle'){
-    const r=it.r||40; ctx.beginPath(); ctx.arc(pos.x,pos.y,r,0,Math.PI*2);
+    const r=it.r||40;
+    ctx.beginPath(); ctx.arc(pos.x,pos.y,r,0,Math.PI*2);
     if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fill(); }
     if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.stroke(); }
-    const label=(it.text&&it.text.length?it.text:it.name)||''; ctx.fillStyle=it.textColor||'#fff'; ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'ui-monospace'); ctx.textAlign='center'; ctx.textBaseline='middle'; wrapFillText(ctx,label,pos.x,pos.y,r*1.6*s,Math.max(8,(it.fontSize||20))*1.2*s);
+    const label=(it.text&&it.text.length?it.text:it.name)||'';
+    ctx.fillStyle=it.textColor||'#fff';
+    ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'ui-monospace');
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    wrapFillText(ctx,label,pos.x,pos.y,r*1.6*s,Math.max(8,(it.fontSize||20))*1.2*s);
   }
   else if(it.type==='triangle'){
-    const r=it.r||40; ctx.beginPath(); ctx.moveTo(pos.x, pos.y - r); ctx.lineTo(pos.x + r, pos.y + r); ctx.lineTo(pos.x - r, pos.y + r); ctx.closePath(); if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fill(); } if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.stroke(); } ctx.fillStyle=it.textColor||'#fff'; ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'system-ui'); ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(it.text||it.name||'△', pos.x, pos.y);
+    const r=it.r||40;
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y - r);
+    ctx.lineTo(pos.x + r, pos.y + r);
+    ctx.lineTo(pos.x - r, pos.y + r);
+    ctx.closePath();
+    if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fill(); }
+    if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.stroke(); }
+    ctx.fillStyle=it.textColor||'#fff';
+    ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'system-ui');
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(it.text||it.name||'△', pos.x, pos.y);
   }
   else if(it.type==='rect'){
-    const w=it.w||160, h=it.h||90; if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fillRect(pos.x-w/2,pos.y-h/2,w,h); } if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.strokeRect(pos.x-w/2,pos.y-h/2,w,h); }
+    const w=it.w||160, h=it.h||90;
+    if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fillRect(pos.x-w/2,pos.y-h/2,w,h); }
+    if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.strokeRect(pos.x-w/2,pos.y-h/2,w,h); }
   }
   else if(it.type==='textRect'){
-    const w=it.w||220, h=it.h||120; if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fillRect(pos.x-w/2,pos.y-h/2,w,h); } if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.strokeRect(pos.x-w/2,pos.y-h/2,w,h); } ctx.fillStyle=it.textColor||'#111'; ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'system-ui'); ctx.textAlign='center'; ctx.textBaseline='middle'; const lines=(it.text||'テキスト').split('\n'); lines.forEach((ln,iLine)=> ctx.fillText(ln, pos.x, pos.y+(iLine-(lines.length-1)/2)*(Math.max(8,(it.fontSize||20))*1.2*s)));
+    const w=it.w||220, h=it.h||120;
+    if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fillRect(pos.x-w/2,pos.y-h/2,w,h); }
+    if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.strokeRect(pos.x-w/2,pos.y-h/2,w,h); }
+    ctx.fillStyle=it.textColor||'#111';
+    ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'system-ui');
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    const lines=(it.text||'テキスト').split('\n');
+    lines.forEach((ln,iLine)=> ctx.fillText(ln, pos.x, pos.y+(iLine-(lines.length-1)/2)*(Math.max(8,(it.fontSize||20))*1.2*s)));
   }
   else if(it.type==='image'){
-    const w=it.w||100, h=it.h||100; if(it.image){ ctx.drawImage(it.image, pos.x-w/2, pos.y-h/2, w, h); }
+    const w=it.w||100, h=it.h||100;
+    if(it.image){ ctx.drawImage(it.image, pos.x-w/2, pos.y-h/2, w, h); }
   }
 
   // 選択枠
   if(isSelected(i)){
-    ctx.strokeStyle= it.locked ? '#9ca3af' : '#f59e0b'; ctx.lineWidth=3*s;
+    ctx.strokeStyle= it.locked ? '#9ca3af' : '#f59e0b';
+    ctx.lineWidth=3*s;
     if(it.type==='rect'||it.type==='textRect'||it.type==='image'){
-      const w=(it.w||160), h=(it.h||90); ctx.strokeRect(pos.x-w/2-4*s, pos.y-h/2-4*s, w+8*s, h+8*s);
-    } else { const rr=(it.r||40)+4; ctx.beginPath(); ctx.arc(pos.x,pos.y,rr,0,Math.PI*2); ctx.stroke(); }
+      const w=(it.w||160), h=(it.h||90);
+      ctx.strokeRect(pos.x-w/2-4*s, pos.y-h/2-4*s, w+8*s, h+8*s);
+    } else {
+      const rr=(it.r||40)+4;
+      ctx.beginPath(); ctx.arc(pos.x,pos.y,rr,0,Math.PI*2); ctx.stroke();
+    }
   }
   ctx.globalAlpha=1; ctx.restore();
 }
-function wrapFillText(ctx, text, cx, cy, maxW, lineH){ const words=(text+"").split(/\s+/); const lines=[]; let cur=''; for(const w of words){ const test=cur?cur+' '+w:w; if(ctx.measureText(test).width<=maxW){ cur=test; } else { if(cur) lines.push(cur); cur=w; } } if(cur) lines.push(cur); const off=(lines.length-1)/2; lines.forEach((ln,i)=> ctx.fillText(ln, cx, cy + (i-off)*lineH)); }
-function draw(){ drawFrame(); drawTargets(); items.forEach((it,i)=>{ const st=getStateAtTime(it,tNow); it.pos.x=st.x; it.pos.y=st.y; it.rotation=st.rot; drawItem(it, st, i); }); const idx=firstSelected(); if(idx>=0){ const it=items[idx]; const st=getStateAtTime(it,tNow); coordReadout.textContent=`X: ${st.x|0}, Y: ${st.y|0}`; } }
-
-// ====== TL描画 ======
-function drawTimeline(){ ensureTimelineCanvasHeight(); tctx.clearRect(0,0,TL.width,TL.height); tctx.fillStyle='#f9fafb'; tctx.fillRect(0,0,TL.width,TL.height); tctx.strokeStyle='#e5e7eb'; tctx.strokeRect(0.5,0.5,TL.width-1,TL.height-1); tctx.fillStyle='#111827'; tctx.font='12px ui-sans-serif'; tctx.fillText('タイムライン',12,18);
-  const steps=Math.max(2,Math.min(20,Math.ceil(viewDur()))); tctx.fillStyle='#374151'; tctx.font='12px ui-monospace'; for(let i=0;i<=steps;i++){ const tt=tlStart + i/steps*viewDur(); const gx=tToX(tt); tctx.fillText(tt.toFixed(1)+'s', gx-12, 36); tctx.fillStyle='#e5e7eb'; tctx.fillRect(gx,42,1,TL.height-46); tctx.fillStyle='#374151'; }
-  items.forEach((it,i)=>{ const y=laneTop+i*(laneH+laneGap);
-    tctx.fillStyle='#f1f5f9'; tctx.fillRect(LEFT_PAD,y,ICON_W_LOCK,laneH); tctx.strokeStyle='#e2e8f0'; tctx.strokeRect(LEFT_PAD+0.5,y+0.5,ICON_W_LOCK-1,laneH-1); tctx.fillStyle= it.locked ? '#9a3412' : '#166534'; tctx.font='13px ui-sans-serif'; tctx.fillText(it.locked?'🔒':'🔓', LEFT_PAD+4, y+laneH-7);
-    tctx.fillStyle='#f1f5f9'; tctx.fillRect(LEFT_PAD+ICON_W_LOCK,y,ICON_W_EYE,laneH); tctx.strokeStyle='#e2e8f0'; tctx.strokeRect(LEFT_PAD+ICON_W_LOCK+0.5,y+0.5,ICON_W_EYE-1,laneH-1); tctx.fillStyle= it.visible ? '#334155' : '#64748b'; tctx.fillText(it.visible?'👁':'🙈', LEFT_PAD+ICON_W_LOCK+4, y+laneH-7);
-    tctx.fillStyle=isSelected(i)?'#111827':'#6b7280'; tctx.font='12px ui-sans-serif'; tctx.fillText((it.name||it.type)+(it.locked?' 🔒':''), NAME_X, y+laneH-6);
-    const barMuted = it.locked || !it.visible; tctx.fillStyle= barMuted ? '#eef2ff' : '#e0e7ff'; tctx.fillRect(80,y,TL.width-96,laneH); tctx.strokeStyle='#c7d2fe'; tctx.strokeRect(80.5,y+0.5,TL.width-97,laneH-1);
-    (it.keys||[]).forEach((k)=>{ const x=tToX(k.t); const size=8; tctx.fillStyle= barMuted ? '#94a3b8' : '#2563eb'; tctx.beginPath(); tctx.moveTo(x,y+laneH/2-size); tctx.lineTo(x+size,y+laneH/2); tctx.lineTo(x,y+laneH/2+size); tctx.lineTo(x-size,y+laneH/2); tctx.closePath(); tctx.fill(); });
+function wrapFillText(ctx, text, cx, cy, maxW, lineH){
+  const words=(text+"").split(/\s+/); const lines=[]; let cur='';
+  for(const w of words){ const test=cur?cur+' '+w:w; if(ctx.measureText(test).width<=maxW){ cur=test; } else { if(cur) lines.push(cur); cur=w; } }
+  if(cur) lines.push(cur);
+  const off=(lines.length-1)/2;
+  lines.forEach((ln,i)=> ctx.fillText(ln, cx, cy + (i-off)*lineH));
+}
+function draw(){
+  drawFrame();
+  drawTargets();
+  items.forEach((it,i)=>{
+    const st=getStateAtTime(it,tNow);
+    it.pos.x=st.x; it.pos.y=st.y; it.rotation=st.rot;
+    drawItem(it, st, i);
   });
-  const cx=tToX(tNow); tctx.strokeStyle='#f59e0b'; tctx.beginPath(); tctx.moveTo(cx,0); tctx.lineTo(cx,TL.height); tctx.stroke(); }
+  const idx=firstSelected(); if(idx>=0){ const it=items[idx]; const st=getStateAtTime(it,tNow); coordReadout.textContent=`X: ${st.x|0}, Y: ${st.y|0}`; }
+}
+
+// ====== TL描画（省略せずそのまま） ======
+function drawTimeline(){
+  ensureTimelineCanvasHeight();
+  tctx.clearRect(0,0,TL.width,TL.height);
+  tctx.fillStyle='#f9fafb'; tctx.fillRect(0,0,TL.width,TL.height);
+  tctx.strokeStyle='#e5e7eb'; tctx.strokeRect(0.5,0.5,TL.width-1,TL.height-1);
+  tctx.fillStyle='#111827'; tctx.font='12px ui-sans-serif'; tctx.fillText('タイムライン',12,18);
+
+  const steps=Math.max(2,Math.min(20,Math.ceil(viewDur())));
+  tctx.fillStyle='#374151'; tctx.font='12px ui-monospace';
+  for(let i=0;i<=steps;i++){
+    const tt=tlStart + i/steps*viewDur(); const gx=tToX(tt);
+    tctx.fillText(tt.toFixed(1)+'s', gx-12, 36);
+    tctx.fillStyle='#e5e7eb'; tctx.fillRect(gx,42,1,TL.height-46);
+    tctx.fillStyle='#374151';
+  }
+
+  items.forEach((it,i)=>{
+    const y=laneTop+i*(laneH+laneGap);
+
+    tctx.fillStyle='#f1f5f9';
+    tctx.fillRect(LEFT_PAD,y,ICON_W_LOCK,laneH);
+    tctx.strokeStyle='#e2e8f0';
+    tctx.strokeRect(LEFT_PAD+0.5,y+0.5,ICON_W_LOCK-1,laneH-1);
+    tctx.fillStyle= it.locked ? '#9a3412' : '#166534';
+    tctx.font='13px ui-sans-serif';
+    tctx.fillText(it.locked?'🔒':'🔓', LEFT_PAD+4, y+laneH-7);
+
+    tctx.fillStyle='#f1f5f9';
+    tctx.fillRect(LEFT_PAD+ICON_W_LOCK,y,ICON_W_EYE,laneH);
+    tctx.strokeStyle='#e2e8f0';
+    tctx.strokeRect(LEFT_PAD+ICON_W_LOCK+0.5,y+0.5,ICON_W_EYE-1,laneH-1);
+    tctx.fillStyle= it.visible ? '#334155' : '#64748b';
+    tctx.fillText(it.visible?'👁':'🙈', LEFT_PAD+ICON_W_LOCK+4, y+laneH-7);
+
+    tctx.fillStyle=isSelected(i)?'#111827':'#6b7280';
+    tctx.font='12px ui-sans-serif';
+    tctx.fillText((it.name||it.type)+(it.locked?' 🔒':''), NAME_X, y+laneH-6);
+
+    const barMuted = it.locked || !it.visible;
+    tctx.fillStyle= barMuted ? '#eef2ff' : '#e0e7ff';
+    tctx.fillRect(80,y,TL.width-96,laneH);
+    tctx.strokeStyle='#c7d2fe';
+    tctx.strokeRect(80.5,y+0.5,TL.width-97,laneH-1);
+
+    (it.keys||[]).forEach((k)=>{
+      const x=tToX(k.t); const size=8;
+      tctx.fillStyle= barMuted ? '#94a3b8' : '#2563eb';
+      tctx.beginPath();
+      tctx.moveTo(x,y+laneH/2-size); tctx.lineTo(x+size,y+laneH/2);
+      tctx.lineTo(x,y+laneH/2+size); tctx.lineTo(x-size,y+laneH/2);
+      tctx.closePath(); tctx.fill();
+    });
+  });
+
+  const cx=tToX(tNow);
+  tctx.strokeStyle='#f59e0b'; tctx.beginPath(); tctx.moveTo(cx,0); tctx.lineTo(cx,TL.height); tctx.stroke();
+}
 
 let draggingKF=null, tlPanning=false, tlPanPrev=0;
 TL.addEventListener('contextmenu',e=>e.preventDefault());
@@ -393,92 +513,210 @@ TL.addEventListener('mousedown',e=>{
 
   const add = e.ctrlKey||e.metaKey;
   if(add){ if(isSelected(lane)) selected.delete(lane); else selected.add(lane); }
-  else { if(!isSelected(lane)){ selected.clear(); selected.add(lane); } }
+  else { selected = isSelected(lane) ? selected : new Set([lane]); }
   syncPropPanel();
 
   if(!it.locked && it.visible){
     const yMid=(laneTop+lane*(laneH+laneGap))+laneH/2; const th=10;
     for(let k=0;k<(it.keys||[]).length;k++){
       const gx=tToX(it.keys[k].t);
-      if(Math.abs(gx-x)<=th && Math.abs(yMid-y)<=th){ pushUndo(); draggingKF={item:lane, key:k}; drawTimeline(); return; }
+      if(Math.abs(gx-x)<=th && Math.abs(yMid-y)<=th){
+        pushUndo(); draggingKF={item:lane, key:k}; drawTimeline(); return;
+      }
     }
   }
   tNow=applySnap(xToT(x)); updateTimeLabel(); draw(); drawTimeline();
 });
 function laneIndexAtY(y){ if(y<laneTop) return -1; const idx=Math.floor((y-laneTop)/(laneH+laneGap)); return (idx>=0&&idx<items.length)?idx:-1; }
 window.addEventListener('mousemove',e=>{
-  if(tlPanning){ const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const pad=80,w=TL.width-pad-16; const vd=viewDur(); const dx=x-tlPanPrev; tlPanPrev=x; tlStart -= (dx/w)*vd; clampTlStart(); drawTimeline(); return; }
-  if(draggingKF){ const it=items[draggingKF.item]; if(it.locked || !it.visible){ draggingKF=null; return; } const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; let k=it.keys[draggingKF.key]; let t=applySnap(xToT(x)); t=Math.max(0,Math.min(duration,t)); k.t=t; const ref=k; it.keys.sort((a,b)=>a.t-b.t); draggingKF.key=it.keys.indexOf(ref); drawTimeline(); return; }
+  if(tlPanning){
+    const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const pad=80,w=TL.width-pad-16; const vd=viewDur();
+    const dx=x-tlPanPrev; tlPanPrev=x; tlStart -= (dx/w)*vd; clampTlStart(); drawTimeline(); return;
+  }
+  if(draggingKF){
+    const it=items[draggingKF.item]; if(it.locked || !it.visible){ draggingKF=null; return; }
+    const r=TL.getBoundingClientRect(); const x=e.clientX-r.left;
+    let k=it.keys[draggingKF.key]; let t=applySnap(xToT(x)); t=Math.max(0,Math.min(duration,t));
+    k.t=t; const ref=k; it.keys.sort((a,b)=>a.t-b.t); draggingKF.key=it.keys.indexOf(ref); drawTimeline(); return;
+  }
 });
 window.addEventListener('mouseup',()=>{ tlPanning=false; draggingKF=null; });
 
-// ====== キャンバス入力（複数選択修正） ======
-let dragging=false, dragKind='item', dragIdx=-1, dragOff={x:0,y:0};
-let marqueeOn=false, marqueeStart=null;
-let groupDragAnchor = null; // {x,y}
-let groupInitials = null;   // [{idx,x0,y0}]
+// ====== キャンバス入力（複数選択：ご提示コード準拠） ======
+let dragging=false, dragKind='item';
+let marqueeOn=false, marqueeStartCss=null;
+
+// グループドラッグ用：基準点（Canvas座標）と、各選択の初期値＋“確定したキー参照”
+let groupDragAnchor = null; // {x,y} in Canvas
+let groupDragData = null;   // [{idx, x0, y0, key}]
+
+// キー操作ユーティリティ
+function nearestKeyAtTime(it, t){
+  if(!it.keys || !it.keys.length) return null;
+  let best = it.keys[0];
+  let bd = Math.abs(it.keys[0].t - t);
+  for(const k of it.keys){
+    const d = Math.abs(k.t - t);
+    if(d < bd){ bd = d; best = k; }
+  }
+  return best;
+}
+function ensureKeyAtNow(it){
+  const eps=1/120; const idx=it.keys.findIndex(k=>Math.abs(k.t-tNow)<eps);
+  if(idx<0){
+    const st=getStateAtTime(it,tNow);
+    it.keys.push({t:tNow,x:st.x,y:st.y,rot:st.rot});
+    it.keys.sort((a,b)=>a.t-b.t);
+  }
+}
+function keyRefAtNow(it){
+  ensureKeyAtNow(it);
+  // いま作った（または既存の）t==tNowのキーそのものを返す
+  const eps=1/120;
+  return it.keys.find(k=>Math.abs(k.t-tNow)<eps) || nearestKeyAtTime(it,tNow);
+}
 
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('mousedown',e=>{
-  const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
-  if(e.button===1||e.button===2||spaceDown){ panning=true; panPrev=p; return; }
-  const add = e.ctrlKey||e.metaKey; const w=screenToWorld(p);
+  const pCanvas=getPointer(e);
+  if(e.button===1||e.button===2||spaceDown){ panning=true; panPrev=pCanvas; return; }
 
-  // 1) ターゲット
+  const w=screenToWorld(pCanvas);
+
+  // 1) ターゲット（任意）
   if(showTargets && !targetsLocked){
-    for(let i=targets.length-1;i>=0;i--){ const t=targets[i]; const dx=w.x-t.x,dy=w.y-t.y; if(dx*dx+dy*dy<=50*50){ pushUndo(); dragging=true; dragKind='target'; dragIdx=i; dragOff={x:w.x-t.x,y:w.y-t.y}; return; } }
+    for(let i=targets.length-1;i>=0;i--){
+      const t=targets[i], dx=w.x-t.x, dy=w.y-t.y;
+      if(dx*dx+dy*dy<=50*50){
+        pushUndo(); dragging=true; dragKind='target';
+        groupDragAnchor=pCanvas;
+        groupDragData=[{idx:i, x0:t.x, y0:t.y, key:null}];
+        return;
+      }
+    }
   }
 
   // 2) アイテム（前面優先）
   for(let i=items.length-1;i>=0;i--){
-    const it=items[i]; if(!showItems || !it.visible) continue; if(it.locked) continue; if(hitItem(it,w)){
+    const it=items[i]; if(!showItems || !it.visible) continue; if(it.locked) continue;
+    if(hitItem(it,w)){
       pushUndo();
-      // 選択更新（修正点：既に選択中なら単独化しない）
-      if(add){ if(isSelected(i)) selected.delete(i); else selected.add(i); }
-      else { if(!isSelected(i)){ selected.clear(); selected.add(i); } /* 選択済みなら維持 */ }
+      // ご提示版の選択挙動：Ctrl/⌘でトグル、無修飾は単独化
+      if(e.ctrlKey||e.metaKey){
+        if(selected.has(i)) selected.delete(i); else selected.add(i);
+      }else{
+        selected = new Set([i]);
+      }
 
-      // グループドラッグの基準
-      groupDragAnchor = { x: w.x, y: w.y };
-      groupInitials = [...selected].map(idx=>{ const st=getStateAtTime(items[idx], tNow); return { idx, x0: st.x, y0: st.y }; });
-      // すべてに現在時刻キー確保
-      for(const s of groupInitials){ ensureKeyAtNow(items[s.idx]); }
-      dragKind='items'; dragging=true; syncPropPanel(); draw(); return;
+      // “確定キー参照”を保持
+      groupDragAnchor = pCanvas;
+      groupDragData = [...selected].map(idx=>{
+        const st=getStateAtTime(items[idx], tNow);
+        const kr = keyRefAtNow(items[idx]); // mousedown時に固定
+        return { idx, x0: st.x, y0: st.y, key: kr };
+      });
+
+      dragging=true; dragKind='items';
+      syncPropPanel(); draw();
+      return;
     }
   }
 
-  // 3) マルキー
-  marqueeOn=true; marqueeStart=p; updateMarquee(marqueeStart,p);
+  // 3) 空白：マルキー開始（CSS座標）
+  marqueeOn = true;
+  marqueeStartCss = { x: e.clientX, y: e.clientY };
+  marqueeEl.style.display = 'block';
+  marqueeEl.style.left = `${e.clientX}px`;
+  marqueeEl.style.top  = `${e.clientY}px`;
+  marqueeEl.style.width = '0px';
+  marqueeEl.style.height= '0px';
+  updateMarqueeSelection(e.clientX, e.clientY);
 });
 
 canvas.addEventListener('mousemove',e=>{
-  const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top};
-  if(marqueeOn && marqueeStart){ updateMarquee(marqueeStart,p); return; }
-  if(panning&&panPrev){ const dx=p.x-panPrev.x, dy=p.y-panPrev.y; setView(view.scale,view.x+dx,view.y+dy); panPrev=p; return; }
-  if(!dragging) return; const w=screenToWorld(p);
+  // マルキー更新
+  if(marqueeOn && marqueeStartCss){
+    const x1 = marqueeStartCss.x, y1 = marqueeStartCss.y;
+    const x2 = e.clientX,        y2 = e.clientY;
+    const left = Math.min(x1,x2), top = Math.min(y1,y2);
+    const w = Math.abs(x2-x1),   h   = Math.abs(y2-y1);
+    marqueeEl.style.left = `${left}px`;
+    marqueeEl.style.top  = `${top}px`;
+    marqueeEl.style.width = `${w}px`;
+    marqueeEl.style.height= `${h}px`;
+    updateMarqueeSelection(x2, y2);
+    return;
+  }
 
-  if(dragKind==='target'){ const t=targets[dragIdx]; t.x=snapCoord(w.x-dragOff.x); t.y=snapCoord(w.y-dragOff.y); draw(); return; }
+  // パン
+  if(panning && panPrev){
+    const cur=getPointer(e); // Canvas座標で追跡
+    const dx=cur.x-panPrev.x, dy=cur.y-panPrev.y;
+    setView(view.scale,view.x+dx,view.y+dy); panPrev=cur; return;
+  }
+
+  // グループドラッグ
+  if(!dragging || !groupDragAnchor || !groupDragData) return;
+  const curCanvas=getPointer(e);
+  const dx = snapDelta(curCanvas.x - groupDragAnchor.x);
+  const dy = snapDelta(curCanvas.y - groupDragAnchor.y);
+
+  if(dragKind==='target'){
+    const s=groupDragData[0];
+    const t=targets[s.idx]; if(!t) return;
+    t.x = s.x0 + dx; t.y = s.y0 + dy;
+    draw(); return;
+  }
+
   if(dragKind==='items'){
-    if(!groupDragAnchor || !groupInitials) return; const dx = w.x - groupDragAnchor.x; const dy = w.y - groupDragAnchor.y;
-    for(const s of groupInitials){ const it=items[s.idx]; if(it.locked || !it.visible) continue; const nx = snapCoord(s.x0 + dx); const ny = snapCoord(s.y0 + dy); const key = nearestKeyAtTime(it, tNow); if(key){ key.x = nx; key.y = ny; } }
+    for(const s of groupDragData){
+      const it=items[s.idx]; if(!it || it.locked || !it.visible) continue;
+      const nx = s.x0 + dx;
+      const ny = s.y0 + dy;
+      // mousedown時に固定した key 参照を書き換える（最近傍再検索しない）
+      if(s.key){ s.key.x = nx; s.key.y = ny; }
+    }
     draw(); return;
   }
 });
 
-window.addEventListener('mouseup',()=>{ dragging=false; dragIdx=-1; panning=false; panPrev=null; if(marqueeOn){ marqueeOn=false; marqueeEl.style.display='none'; } groupDragAnchor=null; groupInitials=null; });
+window.addEventListener('mouseup',()=>{
+  if(marqueeOn){
+    marqueeOn=false; marqueeStartCss=null; marqueeEl.style.display='none';
+  }
+  dragging=false; dragKind='item';
+  groupDragAnchor=null; groupDragData=null;
+  panning=false; panPrev=null;
+});
 
-window.addEventListener('keydown',e=>{ if(e.code==='Space'){ spaceDown=true; e.preventDefault(); }});
-window.addEventListener('keyup',e=>{ if(e.code==='Space'){ spaceDown=false; }});
+// マルキー選択（CSS→Canvas→World）
+function updateMarqueeSelection(curCssX, curCssY){
+  const x1 = marqueeStartCss.x, y1 = marqueeStartCss.y;
+  const x2 = curCssX,           y2 = curCssY;
+  const minCssX = Math.min(x1,x2), minCssY = Math.min(y1,y2);
+  const maxCssX = Math.max(x1,x2), maxCssY = Math.max(y1,y2);
+  const p1c = cssToCanvas(minCssX, minCssY);
+  const p2c = cssToCanvas(maxCssX, maxCssY);
+  const p1 = screenToWorld(p1c);
+  const p2 = screenToWorld(p2c);
 
-canvas.addEventListener('wheel',e=>{ const rect=canvas.getBoundingClientRect(); const p={x:e.clientX-rect.left, y:e.clientY-rect.top}; const before=screenToWorld(p); const delta=-(e.deltaY||e.wheelDelta)*0.001; const s=Math.max(MIN_S,Math.min(MAX_S, view.scale*(1+delta))); const newX=p.x-before.x*s; const newY=p.y-before.y*s; setView(s,newX,newY); e.preventDefault(); },{passive:false});
+  selected.clear();
+  for(let i=0;i<items.length;i++){
+    const st=getStateAtTime(items[i], tNow);
+    if(st.x>=p1.x && st.x<=p2.x && st.y>=p1.y && st.y<=p2.y) selected.add(i);
+  }
+  syncPropPanel(); draw();
+}
 
-function updateMarquee(a,b){ const x=Math.min(a.x,b.x), y=Math.min(a.y,b.y); const w=Math.abs(a.x-b.x), h=Math.abs(a.y-b.y); marqueeEl.style.display='block'; marqueeEl.style.left=(x)+'px'; marqueeEl.style.top=(y)+'px'; marqueeEl.style.width=w+'px'; marqueeEl.style.height=h+'px'; const r=canvas.getBoundingClientRect(); const toWorld=(px,py)=>screenToWorld({x:px-r.left, y:py-r.top}); const p1=toWorld(x,y), p2=toWorld(x+w,y+h); selected.clear(); items.forEach((it,i)=>{ if(!showItems||!it.visible) return; const st=getStateAtTime(it,tNow); const hit = (st.x>=p1.x && st.x<=p2.x && st.y>=p1.y && st.y<=p2.y); if(hit) selected.add(i); }); syncPropPanel(); draw(); }
-
-function hitItem(it,w){ const st=getStateAtTime(it,tNow); if(it.type==='icon'||it.type==='circle'||it.type==='triangle'){ const r=it.r||40; const dx=w.x-st.x,dy=w.y-st.y; return (dx*dx+dy*dy<=r*r); } else { const hw=(it.w||160)/2, hh=(it.h||90)/2; return (Math.abs(w.x-st.x)<=hw && Math.abs(w.y-st.y)<=hh); } }
-
-// ====== キー操作 ======
-function nearestKeyAtTime(it, t){ if(!it.keys || !it.keys.length) return null; let best = it.keys[0]; let bd = Math.abs(it.keys[0].t - t); for(const k of it.keys){ const d = Math.abs(k.t - t); if(d < bd){ bd = d; best = k; } } return best; }
-function ensureKeyAtNow(it){ const eps=1/120; const idx=it.keys.findIndex(k=>Math.abs(k.t-tNow)<eps); if(idx<0){ const st=getStateAtTime(it,tNow); it.keys.push({t:tNow,x:st.x,y:st.y,rot:st.rot}); it.keys.sort((a,b)=>a.t-b.t); } }
-function addKeyAtNow(it){ ensureKeyAtNow(it); }
+// 当たり判定（回転は近似無視）
+function hitItem(it,w){
+  const st=getStateAtTime(it,tNow);
+  if(it.type==='icon'||it.type==='circle'||it.type==='triangle'){
+    const r=it.r||40; const dx=w.x-st.x,dy=w.y-st.y; return (dx*dx+dy*dy<=r*r);
+  } else {
+    const hw=(it.w||160)/2, hh=(it.h||90)/2; return (Math.abs(w.x-st.x)<=hw && Math.abs(w.y-st.y)<=hh);
+  }
+}
 
 // ====== プロパティパネル ======
 const propName=document.getElementById('propName');
@@ -501,13 +739,67 @@ const posSnapGrid=document.getElementById('posSnapGrid');
 const propLocked=document.getElementById('propLocked');
 const lockBadge=document.getElementById('lockBadge');
 
-function setBadge(locked){ lockBadge.textContent = locked ? '🔒 ロック中' : '🔓 未ロック'; lockBadge.className = 'badge ' + (locked?'locked':'unlocked'); }
+function setBadge(locked){
+  lockBadge.textContent = locked ? '🔒 ロック中' : '🔓 未ロック';
+  lockBadge.className = 'badge ' + (locked?'locked':'unlocked');
+}
 function updateSizeMax(){ propSize.max = Math.floor(Math.min(W,H)/2); }
-function syncPropPanel(){ const idx=firstSelected(); if(idx<0){ setBadge(false); return; } const it=items[idx]; updateSizeMax(); const st=getStateAtTime(it,tNow); propName.value=it.name||''; propX.value = Math.round(st.x); propY.value = Math.round(st.y); propSize.value=it.r||40; propW.value=it.w||160; propH.value=it.h||90; propAlpha.value=(it.alpha==null?1:it.alpha); propText.value=it.text||''; propFill.value=(it.fill!=null?it.fill:'#000000'); noFill.checked=(it.fill==null); propStroke.value=it.stroke||'#111111'; propTextColor.value=it.textColor||'#111111'; propFont.value=it.font||'system-ui'; propFontSize.value=it.fontSize||20; propRotation.value=st.rot ?? (it.rotation||0); posSnapOn.checked = !!posSnap; posSnapGrid.value = posGrid; propLocked.checked = !!it.locked; setBadge(!!it.locked); }
+function syncPropPanel(){
+  const idx=firstSelected(); if(idx<0){ setBadge(false); return; }
+  const it=items[idx]; updateSizeMax();
+  const st=getStateAtTime(it,tNow);
+  propName.value=it.name||'';
+  propX.value = Math.round(st.x);
+  propY.value = Math.round(st.y);
+  propSize.value=it.r||40; propW.value=it.w||160; propH.value=it.h||90;
+  propAlpha.value=(it.alpha==null?1:it.alpha); propText.value=it.text||'';
+  propFill.value=(it.fill!=null?it.fill:'#000000'); noFill.checked=(it.fill==null);
+  propStroke.value=it.stroke||'#111111'; propTextColor.value=it.textColor||'#111111';
+  propFont.value=it.font||'system-ui'; propFontSize.value=it.fontSize||20;
+  propRotation.value=st.rot ?? (it.rotation||0);
+  posSnapOn.checked = !!posSnap; posSnapGrid.value = posGrid;
+  propLocked.checked = !!it.locked; setBadge(!!it.locked);
+}
 
-document.getElementById('applyProps').onclick=()=>{ const idx=firstSelected(); if(idx<0) return; const it=items[idx]; if(it.locked){ alert('このアイテムはロック中です。'); return; } pushUndo(); const maxR=Math.min(W,H)/2; ensureKeyAtNow(it); const k = nearestKeyAtTime(it,tNow); const nx = snapCoord(parseFloat(propX.value)||it.pos.x); const ny = snapCoord(parseFloat(propY.value)||it.pos.y); k.x = nx; k.y = ny; it.name=propName.value||it.name; it.r=Math.max(1, Math.min(maxR, parseFloat(propSize.value)||it.r)); it.w=Math.max(10, Math.min(4096, parseFloat(propW.value)||it.w)); it.h=Math.max(10, Math.min(4096, parseFloat(propH.value)||it.h)); it.alpha=Math.max(0.1, Math.min(1, parseFloat(propAlpha.value)||1)); it.text=propText.value||it.text; it.fill = noFill.checked ? null : (propFill.value||it.fill); it.stroke=propStroke.value||it.stroke; it.textColor=propTextColor.value||it.textColor; it.font=propFont.value||it.font; it.fontSize=Math.max(8, Math.min(240, parseFloat(propFontSize.value)||it.fontSize)); it.rotation = parseFloat(propRotation.value)||0; k.rot = it.rotation; posSnap = !!posSnapOn.checked; posGrid = Math.max(1, Math.min(512, parseInt(posSnapGrid.value,10)||posGrid)); draw(); drawTimeline(); syncPropPanel(); };
+document.getElementById('applyProps').onclick=()=>{
+  const idx=firstSelected(); if(idx<0) return;
+  const it=items[idx]; if(it.locked){ alert('このアイテムはロック中です。'); return; }
+  pushUndo();
+  const maxR=Math.min(W,H)/2;
 
-propLocked.addEventListener('change', ()=>{ const idx=firstSelected(); if(idx<0) return; items[idx].locked = !!propLocked.checked; setBadge(!!items[idx].locked); drawTimeline(); });
+  ensureKeyAtNow(it);
+  const eps=1/120;
+  const k = it.keys.find(k=>Math.abs(k.t-tNow)<eps) || nearestKeyAtTime(it,tNow);
+
+  const nx = snapCoord(parseFloat(propX.value)||it.pos.x);
+  const ny = snapCoord(parseFloat(propY.value)||it.pos.y);
+  k.x = nx; k.y = ny;
+
+  it.name=propName.value||it.name;
+  it.r=Math.max(1, Math.min(maxR, parseFloat(propSize.value)||it.r));
+  it.w=Math.max(10, Math.min(4096, parseFloat(propW.value)||it.w));
+  it.h=Math.max(10, Math.min(4096, parseFloat(propH.value)||it.h));
+  it.alpha=Math.max(0.1, Math.min(1, parseFloat(propAlpha.value)||1));
+  it.text=propText.value||it.text;
+  it.fill = noFill.checked ? null : (propFill.value||it.fill);
+  it.stroke=propStroke.value||it.stroke;
+  it.textColor=propTextColor.value||it.textColor;
+  it.font=propFont.value||it.font;
+  it.fontSize=Math.max(8, Math.min(240, parseFloat(propFontSize.value)||it.fontSize));
+  it.rotation = parseFloat(propRotation.value)||0;
+  k.rot = it.rotation;
+
+  posSnap = !!posSnapOn.checked;
+  posGrid = Math.max(1, Math.min(512, parseInt(posSnapGrid.value,10)||posGrid));
+
+  draw(); drawTimeline(); syncPropPanel();
+};
+
+// ロックトグル
+propLocked.addEventListener('change', ()=>{
+  const idx=firstSelected(); if(idx<0) return;
+  items[idx].locked = !!propLocked.checked; setBadge(!!items[idx].locked); drawTimeline();
+});
 
 // レイヤーUI
 const showTargetsChk=document.getElementById('showTargets');
@@ -526,7 +818,13 @@ const bringFront=document.getElementById('bringFront');
 const sendBack=document.getElementById('sendBack');
 const bringForward=document.getElementById('bringForward');
 const sendBackward=document.getElementById('sendBackward');
-function moveItem(idx, newIdx){ if(idx<0||idx>=items.length) return; if(items[idx].locked){ alert('ロック中のため順序を変更できません。'); return; } if(newIdx<0) newIdx=0; if(newIdx>=items.length) newIdx=items.length-1; const [it]=items.splice(idx,1); items.splice(newIdx,0,it); selected=new Set([newIdx]); draw(); drawTimeline(); }
+function moveItem(idx, newIdx){
+  if(idx<0||idx>=items.length) return;
+  if(items[idx].locked){ alert('ロック中のため順序を変更できません。'); return; }
+  if(newIdx<0) newIdx=0; if(newIdx>=items.length) newIdx=items.length-1;
+  const [it]=items.splice(idx,1); items.splice(newIdx,0,it);
+  selected=new Set([newIdx]); draw(); drawTimeline();
+}
 bringFront.onclick=()=>moveItem(firstSelected(), items.length-1);
 sendBack.onclick=()=>moveItem(firstSelected(), 0);
 bringForward.onclick=()=>moveItem(firstSelected(), firstSelected()+1);
@@ -554,12 +852,36 @@ document.getElementById('addCircleBtn').onclick=()=>{ pushUndo(); const x=W*0.5,
 document.getElementById('addRectBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; addWithDefaults({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:20,w:200,h:120,alpha:1,rotation:0,pos:{x,y},r:40,text:'',keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); };
 document.getElementById('addTriangleBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; addWithDefaults({type:'triangle',name:'△',fill:'#10b981',stroke:'#065f46',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},text:'△',keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); };
 document.getElementById('addTextRectBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; const text=prompt('枠内テキスト（改行可）','テキスト')||'テキスト'; addWithDefaults({type:'textRect',name:'T',fill:'#ffffff',stroke:'#111111',textColor:'#111111',font:"'Noto Sans JP', system-ui",fontSize:20,w:240,h:140,alpha:1,rotation:0,pos:{x,y},r:18,text,keys:[{t:0,x,y,rot:0}],locked:false,visible:true}); };
-document.getElementById('addImageBtn').onclick=()=>{ const input=document.getElementById('imgInput'); if(!input.files || !input.files.length){ alert('画像ファイルを選択してください。'); return; } const file=input.files[0]; const reader=new FileReader(); reader.onload = e=>{ const dataUrl = e.target.result; const img=new Image(); img.onload=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; const baseW=Math.min(400, img.width); const scale = baseW / img.width; const baseH=Math.max(10, Math.round(img.height * scale)); addWithDefaults({ type:'image', name:file.name||'image', image:img, imageSrc:dataUrl, w:baseW, h:baseH, alpha:1, rotation:0, pos:{x,y}, keys:[{t:0,x,y,rot:0}], locked:false, visible:true }); }; img.src=dataUrl; }; reader.readAsDataURL(file); };
+document.getElementById('addImageBtn').onclick=()=>{
+  const input=document.getElementById('imgInput');
+  if(!input.files || !input.files.length){ alert('画像ファイルを選択してください。'); return; }
+  const file=input.files[0];
+  const reader=new FileReader();
+  reader.onload = e=>{
+    const dataUrl = e.target.result;
+    const img=new Image();
+    img.onload=()=>{
+      pushUndo();
+      const x=W*0.5, y=H*0.5;
+      const baseW=Math.min(400, img.width);
+      const scale = baseW / img.width;
+      const baseH=Math.max(10, Math.round(img.height * scale));
+      addWithDefaults({
+        type:'image', name:file.name||'image', image:img, imageSrc:dataUrl,
+        w:baseW, h:baseH,
+        alpha:1, rotation:0, pos:{x,y},
+        keys:[{t:0,x,y,rot:0}], locked:false, visible:true
+      });
+    };
+    img.src=dataUrl;
+  };
+  reader.readAsDataURL(file);
+};
 
 document.getElementById('deleteItemBtn').onclick=()=>{ if(!selected.size) return; pushUndo(); const remain=[]; items.forEach((it,i)=>{ if(selected.has(i)&&!it.locked){} else remain.push(it); }); items=remain; selected.clear(); draw(); drawTimeline(); syncPropPanel(); };
 
 // ====== KFボタン ======
-document.getElementById('addKF').onclick=()=>{ if(!selected.size) return; pushUndo(); for(const i of selected){ const it=items[i]; if(it.locked) continue; addKeyAtNow(it); } drawTimeline(); };
+document.getElementById('addKF').onclick=()=>{ if(!selected.size) return; pushUndo(); for(const i of selected){ const it=items[i]; if(it.locked) continue; ensureKeyAtNow(it); } drawTimeline(); };
 document.getElementById('delKF').onclick=()=>{ if(!selected.size) return; pushUndo(); for(const i of selected){ const it=items[i]; if(!it||!it.keys||it.keys.length<=1||it.locked) continue; it.keys.pop(); } drawTimeline(); };
 document.getElementById('clearKF').onclick=()=>{ if(!selected.size) return; pushUndo(); for(const i of selected){ const it=items[i]; if(!it||it.locked) continue; it.keys=[it.keys[0]]; } drawTimeline(); };
 
@@ -576,9 +898,41 @@ function loop(ts){ if(!isPlaying) return; if(!lastTs) lastTs=ts; const dt=(ts-la
 window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; const z=e.key.toLowerCase()==='z'; const y=e.key.toLowerCase()==='y'; if((e.ctrlKey||e.metaKey) && z && !e.shiftKey){ e.preventDefault(); undo(); } else if((e.ctrlKey||e.metaKey) && ( (z && e.shiftKey) || y )){ e.preventDefault(); redo(); } });
 window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; if(e.key==="Delete" || e.key==="Backspace"){ if(!selected.size) return; pushUndo(); const remain=[]; items.forEach((it,i)=>{ if(selected.has(i)&&!it.locked){} else remain.push(it); }); items=remain; selected.clear(); draw(); drawTimeline(); e.preventDefault(); return; } });
 
-let clipItem=null; function deepCopy(o){ return JSON.parse(JSON.stringify(o)); }
-window.addEventListener('keydown',(e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; if((e.ctrlKey||e.metaKey) && (e.key.toLowerCase()==='c')){ const idx=firstSelected(); if(idx>=0){ const it=items[idx]; const obj = deepCopy(it); if(it.type==='image' && it.imageSrc){ obj.imageSrc = it.imageSrc; } clipItem=obj; } e.preventDefault(); }
-  if((e.ctrlKey||e.metaKey) && (e.key.toLowerCase()==='v')){ if(clipItem){ pushUndo(); const cp=deepCopy(clipItem); cp.locked=false; cp.visible=true; cp.name = (cp.name||'Item')+'*'; if(cp.type==='image' && cp.imageSrc){ const img=new Image(); img.src=cp.imageSrc; cp.image=img; } cp.pos.x = (cp.pos?.x||W*0.5) + 20; cp.pos.y = (cp.pos?.y||H*0.5) + 20; if(Array.isArray(cp.keys)){ cp.keys.forEach(k=>{ k.x+=20; k.y+=20; }); } items.push(cp); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); } e.preventDefault(); }
+// クリップボード（アプリ内）
+let clipItem=null;
+function deepCopy(o){ return JSON.parse(JSON.stringify(o)); }
+window.addEventListener('keydown',(e)=>{
+  const tag=document.activeElement?.tagName;
+  if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+
+  if((e.ctrlKey||e.metaKey) && (e.key.toLowerCase()==='c')){
+    const idx=firstSelected(); if(idx>=0){
+      const it=items[idx];
+      const obj = deepCopy(it);
+      if(it.type==='image' && it.imageSrc){ obj.imageSrc = it.imageSrc; }
+      clipItem=obj;
+    }
+    e.preventDefault();
+  }
+
+  if((e.ctrlKey||e.metaKey) && (e.key.toLowerCase()==='v')){
+    if(clipItem){
+      pushUndo();
+      const cp=deepCopy(clipItem);
+      cp.locked=false; cp.visible=true;
+      cp.name = (cp.name||'Item')+'*';
+      if(cp.type==='image' && cp.imageSrc){
+        const img=new Image(); img.src=cp.imageSrc; cp.image=img;
+      }
+      const st = cp.pos || {x:W*0.5,y:H*0.5};
+      cp.pos = { x:(st.x||W*0.5)+20, y:(st.y||H*0.5)+20 };
+      if(Array.isArray(cp.keys)){ cp.keys.forEach(k=>{ k.x+=20; k.y+=20; }); }
+      items.push(cp);
+      selected=new Set([items.length-1]);
+      syncPropPanel(); draw(); drawTimeline();
+    }
+    e.preventDefault();
+  }
 });
 
 // ====== TLコントロール ======
@@ -619,24 +973,84 @@ function makeOffscreen(scale){ const off=document.createElement('canvas'); off.w
 exportBtn.onclick=async ()=>{ if(typeof GIF==='undefined'){ alert('GIF.js を読み込めませんでした。ネット接続またはCDNの許可をご確認ください。'); return; } const fps=Math.max(1, Math.min(60, parseInt(expFps.value,10)||20)); const scale=Math.max(0.25, Math.min(2, parseFloat(expScale.value)||1)); let t0=Math.max(0, parseFloat(expStart.value)||0); let t1=Math.max(0, parseFloat(expEnd.value)||duration); if(t1<t0){ const tmp=t0; t0=t1; t1=tmp; } t0=Math.max(0, Math.min(duration, t0)); t1=Math.max(0, Math.min(duration, t1)); const totalFrames = Math.max(1, Math.round((t1 - t0) * fps) + 1); isPlaying=false; exportBtn.disabled=true; exportStatus.textContent=`レンダリング準備 (${totalFrames} frames)`; exportProgress.value=0; exportProgress.max=totalFrames; const off=makeOffscreen(scale); const octx=off.getContext('2d'); const gif=new GIF({workers:2, quality:10, workerScript:'https://unpkg.com/gif.js@0.2.0/dist/gif.worker.js'}); let savedView={...view}; let savedT=tNow; try{ for(let i=0;i<totalFrames;i++){ const tt = t0 + (i/(totalFrames-1))*(t1-t0); tNow=tt; updateTimeLabel(); const prevView={...view}; setView(1,0,0); draw(); view=prevView; octx.setTransform(1,0,0,1,0,0); octx.clearRect(0,0,off.width, off.height); octx.drawImage(canvas, 0,0, off.width, off.height); gif.addFrame(octx, {copy:true, delay: Math.round(1000/fps)}); if(i%5===0){ exportStatus.textContent=`フレーム ${i+1}/${totalFrames}`; } exportProgress.value=i+1; await new Promise(r=>setTimeout(r,0)); } }catch(e){ console.error('Export error', e); alert('書き出し中にエラーが発生しました: '+e.message); tNow=savedT; view=savedView; updateTimeLabel(); draw(); drawTimeline(); exportBtn.disabled=false; exportStatus.textContent='失敗'; return; } gif.on('finished', (blob)=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='animation.gif'; a.click(); tNow=savedT; view=savedView; updateTimeLabel(); draw(); drawTimeline(); exportBtn.disabled=false; exportStatus.textContent='完了'; }); exportStatus.textContent='エンコード中…'; gif.render(); };
 
 // ====== プロジェクト セーブ/ロード ======
-const LS_KEY = 'dragpath_gif_animator_project_v2';
-function serializeProject(){ const s = cloneState(); s.meta = { savedAt: new Date().toISOString(), app:'Drag-Path GIF Animator', version:2 }; return JSON.stringify(s); }
-function deserializeProject(jsonStr){ const data = JSON.parse(jsonStr); if(!data || !data.items || !Array.isArray(data.items)) throw new Error('プロジェクト形式が不正です'); return data; }
-function saveToLocal(){ try{ const json = serializeProject(); localStorage.setItem(LS_KEY, json); toast('保存しました（ブラウザ内）'); } catch(e){ alert('保存に失敗しました: '+e.message); } }
-function loadFromLocal(){ try{ const json = localStorage.getItem(LS_KEY); if(!json){ alert('保存データが見つかりません'); return; } const data = deserializeProject(json); restoreState(data); toast('読み込み完了'); } catch(e){ alert('読み込みに失敗しました: '+e.message); } }
-function downloadJson(){ try{ const json = serializeProject(); const blob = new Blob([json], {type:'application/json'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); const dt = new Date().toISOString().replace(/[:.]/g,'-'); a.download = `gif_animator_project_${dt}.json`; a.click(); URL.revokeObjectURL(a.href); toast('JSONダウンロード開始'); } catch(e){ alert('ダウンロードに失敗しました: '+e.message); } }
-function uploadJson(file){ const reader = new FileReader(); reader.onload = e=>{ try{ const data = deserializeProject(e.target.result); restoreState(data); toast('JSONから読み込み完了'); } catch(err){ alert('JSONの読み込みに失敗: '+err.message); } }; reader.readAsText(file); }
-let toastTimer=null; function toast(msg){ let el = document.getElementById('toast'); if(!el){ el = document.createElement('div'); el.id='toast'; el.style.position='fixed'; el.style.top='10px'; el.style.left='50%'; el.style.transform='translateX(-50%)'; el.style.background='#111827'; el.style.color='#fff'; el.style.padding='6px 10px'; el.style.borderRadius='8px'; el.style.fontSize='12px'; el.style.boxShadow='0 2px 10px rgba(0,0,0,.2)'; el.style.transition='opacity .2s'; el.style.opacity='0'; document.body.appendChild(el); } el.textContent = msg; el.style.opacity='1'; clearTimeout(toastTimer); toastTimer = setTimeout(()=>{ el.style.opacity='0'; }, 1400); }
+const LS_KEY = 'dragpath_gif_animator_project_v3';
+function serializeProject(){
+  const s = cloneState();
+  s.meta = { savedAt: new Date().toISOString(), app:'Drag-Path GIF Animator', version:3 };
+  return JSON.stringify(s);
+}
+function deserializeProject(jsonStr){
+  const data = JSON.parse(jsonStr);
+  if(!data || !data.items || !Array.isArray(data.items)) throw new Error('プロジェクト形式が不正です');
+  return data;
+}
+function saveToLocal(){
+  try{ const json = serializeProject(); localStorage.setItem(LS_KEY, json); toast('保存しました（ブラウザ内）'); }
+  catch(e){ alert('保存に失敗しました: '+e.message); }
+}
+function loadFromLocal(){
+  try{ const json = localStorage.getItem(LS_KEY); if(!json){ alert('保存データが見つかりません'); return; }
+    const data = deserializeProject(json); restoreState(data); toast('読み込み完了'); }
+  catch(e){ alert('読み込みに失敗しました: '+e.message); }
+}
+function downloadJson(){
+  try{ const json = serializeProject(); const blob = new Blob([json], {type:'application/json'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    const dt = new Date().toISOString().replace(/[:.]/g,'-'); a.download = `gif_animator_project_${dt}.json`; a.click(); URL.revokeObjectURL(a.href); toast('JSONダウンロード開始'); }
+  catch(e){ alert('ダウンロードに失敗しました: '+e.message); }
+}
+function uploadJson(file){
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{ const data = deserializeProject(e.target.result); restoreState(data); toast('JSONから読み込み完了'); }
+    catch(err){ alert('JSONの読み込みに失敗: '+err.message); }
+  };
+  reader.readAsText(file);
+}
+let toastTimer=null;
+function toast(msg){
+  let el = document.getElementById('toast');
+  if(!el){
+    el = document.createElement('div'); el.id='toast';
+    el.style.position='fixed'; el.style.top='10px'; el.style.left='50%'; el.style.transform='translateX(-50%)';
+    el.style.background='#111827'; el.style.color='#fff'; el.style.padding='6px 10px'; el.style.borderRadius='8px';
+    el.style.fontSize='12px'; el.style.boxShadow='0 2px 10px rgba(0,0,0,.2)'; el.style.transition='opacity .2s'; el.style.opacity='0';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg; el.style.opacity='1';
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>{ el.style.opacity='0'; }, 1400);
+}
 document.getElementById('saveLocalBtn').onclick = saveToLocal;
 document.getElementById('loadLocalBtn').onclick = loadFromLocal;
 document.getElementById('downloadBtn').onclick = downloadJson;
-document.getElementById('uploadJson').addEventListener('change', (e)=>{ const f = e.target.files && e.target.files[0]; if(f) uploadJson(f); });
+document.getElementById('uploadJson').addEventListener('change', (e)=>{
+  const f = e.target.files && e.target.files[0];
+  if(f) uploadJson(f);
+});
 const autosaveChk = document.getElementById('autosaveOn');
-let autosaveTimer = null; function scheduleAutosave(){ if(!autosaveChk.checked) return; clearTimeout(autosaveTimer); autosaveTimer = setTimeout(()=>{ try{ saveToLocal(); }catch(_){} }, 2500); }
+let autosaveTimer = null;
+function scheduleAutosave(){
+  if(!autosaveChk.checked) return;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(()=>{ try{ saveToLocal(); }catch(_){} }, 2500);
+}
 window.addEventListener('beforeunload', ()=>{ try{ if(autosaveChk.checked) saveToLocal(); }catch(_){ } });
 
 // ====== 初期化 ======
-function init(){ const mw=document.querySelector('main')?.clientWidth||1200; TL.width=Math.min(1200, mw-24); fitToFrame(); updateSizeMax(); updateTimeLabel(); syncPropPanel(); resizeTL(); document.getElementById('expEnd').value=String(duration); document.getElementById('canvasW').value=String(canvas.width); document.getElementById('canvasH').value=String(canvas.height); document.getElementById('frameW').value=String(W); document.getElementById('frameH').value=String(H); document.getElementById('showTargets').checked=showTargets; document.getElementById('showItems').checked=showItems; document.getElementById('lockTargets').checked=targetsLocked; draw(); scheduleAutosave(); }
+function init(){
+  const mw=document.querySelector('main')?.clientWidth||1200;
+  TL.width=Math.min(1200, mw-24);
+  fitToFrame(); updateSizeMax(); updateTimeLabel(); syncPropPanel(); resizeTL();
+  document.getElementById('expEnd').value=String(duration);
+  document.getElementById('canvasW').value=String(canvas.width);
+  document.getElementById('canvasH').value=String(canvas.height);
+  document.getElementById('frameW').value=String(W);
+  document.getElementById('frameH').value=String(H);
+  document.getElementById('showTargets').checked=showTargets;
+  document.getElementById('showItems').checked=showItems;
+  document.getElementById('lockTargets').checked=targetsLocked;
+  draw(); scheduleAutosave();
+}
 init();
 
 function undo(){ if(!undoStack.length) return; const cur=cloneState(); const prev=undoStack.pop(); redoStack.push(cur); restoreState(prev); }
