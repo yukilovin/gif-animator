@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Drag-Path GIF Animator — 複数選択修正/画像/色/透明度/Undo/ロック/保存</title>
+<title>Drag-Path GIF Animator — 複数選択修正/画像/色/透明度/Undo/ロック/保存/タイムラインでKF追加</title>
 <style>
   body{margin:0;background:#ffffff;color:#111827;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;height:100vh;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px;box-sizing:border-box}
   aside{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;overflow:auto}
@@ -142,7 +142,7 @@
     </div>
 
     <div class="panel">
-      <h2>キーフレーム</h2>
+      <h2>キーフレーム（ボタン）</h2>
       <div class="row">
         <button class="btn" id="addKF">＋ KF追加（現在時刻）</button>
         <button class="btn" id="delKF">－ KF削除（最後）</button>
@@ -151,6 +151,9 @@
       <div class="row">
         <label><input type="checkbox" id="snapKeys" checked> TLスナップ</label>
         <span class="pill">間隔 <input type="number" id="snapStep" value="0.10" step="0.01" style="width:60px">s</span>
+      </div>
+      <div class="row">
+        <span class="muted">TL操作：ダブルクリックでそのレーンにKF追加 ／ Alt+クリック＝最寄りKF削除 ／ 既存ダイヤはドラッグで移動</span>
       </div>
     </div>
 
@@ -164,14 +167,24 @@
 
     <div class="panel">
       <h2>タイムライン</h2>
-      <div class="row"><label>表示高(px) <input type="number" id="tlViewportH" value="220" min="140" max="600"></label><label>横ズーム <input type="range" id="tlZoom" min="0.25" max="4" step="0.01" value="1"></label><label>全体秒数 <input type="number" id="duration" value="8" min="1" max="120"></label></div>
-      <div class="row"><span class="pill">Ctrl+ホイール：横ズーム ／ 中/右ドラッグ：横パン ／ 縦スクロール：レーンスクロール</span></div>
+      <div class="row">
+        <label>表示高(px) <input type="number" id="tlViewportH" value="220" min="140" max="600"></label>
+        <label>横ズーム <input type="range" id="tlZoom" min="0.25" max="4" step="0.01" value="1"></label>
+        <label>全体秒数 <input type="number" id="duration" value="8" min="1" max="120"></label>
+      </div>
+      <div class="row">
+        <span class="pill">Ctrl+ホイール：横ズーム ／ Shift+ドラッグ：横パン ／ 縦スクロール：レーンスクロール</span>
+      </div>
     </div>
 
     <div class="panel">
       <h2>ビュー操作（キャンバス）</h2>
-      <div class="row"><button class="btn" id="fitView">↙↗ フィット</button><button class="btn" id="centerIcons">◎ アイテム中央</button><button class="btn" id="resetView">⟲ リセット</button></div>
-      <div class="row"><span class="pill">ズーム：ホイール</span><span class="pill">パン：右/中 or Space+ドラッグ</span></div>
+      <div class="row">
+        <button class="btn" id="fitView">↙↗ フィット</button>
+        <button class="btn" id="centerIcons">◎ アイテム中央</button>
+        <button class="btn" id="resetView">⟲ リセット</button>
+      </div>
+      <div class="row"><span class="pill">ズーム：ホイール ／ パン：右/中 or Space+ドラッグ</span></div>
     </div>
 
     <div class="panel">
@@ -237,6 +250,9 @@ const timeLabel=document.getElementById('timeLabel');
 const coordReadout=document.getElementById('coordReadout');
 const marqueeEl=document.getElementById('marquee');
 
+// 小ユーティリティ
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+
 // ===== 座標変換（CSS→Canvas→World） =====
 function getPointer(evt){
   const rect = canvas.getBoundingClientRect();
@@ -287,12 +303,7 @@ let targets=[];
 /** item: {type, name, fill, stroke, textColor, font, fontSize, r, w, h, text, alpha, rotation, pos:{x,y}, keys:[{t,x,y,rot}], locked?:boolean, visible?:boolean, image?:HTMLImageElement, imageSrc?:string, scaleX?, scaleY?} */
 let items=[]; // 初期は空
 
-function ensureScaleDefaults() {
-  for (const it of items) {
-    if (it.scaleX == null) it.scaleX = 1;
-    if (it.scaleY == null) it.scaleY = 1;
-  }
-}
+function ensureScaleDefaults() { for (const it of items) { if (it.scaleX == null) it.scaleX = 1; if (it.scaleY == null) it.scaleY = 1; } }
 ensureScaleDefaults();
 
 // 選択（複数）
@@ -354,7 +365,12 @@ function getStateAtTime(it, t){
 let W=1080,H=1080; // 枠＝GIF解像度
 let CW=canvas.width, CH=canvas.height; // 作業キャンバス
 
-function drawFrame(){ ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.setTransform(view.scale,0,0,view.scale,view.x,view.y); ctx.strokeStyle='#000'; ctx.lineWidth=3/view.scale; ctx.strokeRect(0.5,0.5,W-1,H-1); }
+function drawFrame(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.setTransform(view.scale,0,0,view.scale,view.x,view.y);
+  ctx.strokeStyle='#000'; ctx.lineWidth=3/view.scale; ctx.strokeRect(0.5,0.5,W-1,H-1);
+}
 function drawTargets(){
   if(!showTargets || !targets.length) return;
   ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -376,13 +392,11 @@ function drawItem(it, pos, i){
   ctx.save();
   ctx.globalAlpha = it.alpha==null?1:it.alpha;
 
-  // 座標系をアイテム中心へ移動→回転→スケール
   const angle = (pos.rot||0) * Math.PI/180;
   ctx.translate(pos.x, pos.y);
   ctx.rotate(angle);
   ctx.scale(sx, sy);
 
-  // 以降は「原点(0,0)中心」で描く
   if(it.type==='icon'||it.type==='circle'){
     const r=it.r||40;
     ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
@@ -428,7 +442,7 @@ function drawItem(it, pos, i){
     if(it.image){ ctx.drawImage(it.image, -w/2, -h/2, w, h); }
   }
 
-  // 選択枠（原点基準）
+  // 選択枠
   if(isSelected(i)){
     ctx.strokeStyle= it.locked ? '#9ca3af' : '#f59e0b';
     ctx.lineWidth=3*s;
@@ -440,7 +454,6 @@ function drawItem(it, pos, i){
       ctx.beginPath(); ctx.arc(0,0,rr,0,Math.PI*2); ctx.stroke();
     }
   }
-
   ctx.restore();
   ctx.globalAlpha=1;
 }
@@ -482,6 +495,7 @@ function drawTimeline(){
   items.forEach((it,i)=>{
     const y=laneTop+i*(laneH+laneGap);
 
+    // ロック切替セル
     tctx.fillStyle='#f1f5f9';
     tctx.fillRect(LEFT_PAD,y,ICON_W_LOCK,laneH);
     tctx.strokeStyle='#e2e8f0';
@@ -490,6 +504,7 @@ function drawTimeline(){
     tctx.font='13px ui-sans-serif';
     tctx.fillText(it.locked?'🔒':'🔓', LEFT_PAD+4, y+laneH-7);
 
+    // 可視/不可視セル
     tctx.fillStyle='#f1f5f9';
     tctx.fillRect(LEFT_PAD+ICON_W_LOCK,y,ICON_W_EYE,laneH);
     tctx.strokeStyle='#e2e8f0';
@@ -497,16 +512,19 @@ function drawTimeline(){
     tctx.fillStyle= it.visible ? '#334155' : '#64748b';
     tctx.fillText(it.visible?'👁':'🙈', LEFT_PAD+ICON_W_LOCK+4, y+laneH-7);
 
+    // 名前
     tctx.fillStyle=isSelected(i)?'#111827':'#6b7280';
     tctx.font='12px ui-sans-serif';
     tctx.fillText((it.name||it.type)+(it.locked?' 🔒':''), NAME_X, y+laneH-6);
 
+    // バー
     const barMuted = it.locked || !it.visible;
     tctx.fillStyle= barMuted ? '#eef2ff' : '#e0e7ff';
     tctx.fillRect(80,y,TL.width-96,laneH);
     tctx.strokeStyle='#c7d2fe';
     tctx.strokeRect(80.5,y+0.5,TL.width-97,laneH-1);
 
+    // キーフレーム（◇）
     (it.keys||[]).forEach((k)=>{
       const x=tToX(k.t); const size=8;
       tctx.fillStyle= barMuted ? '#94a3b8' : '#2563eb';
@@ -517,6 +535,7 @@ function drawTimeline(){
     });
   });
 
+  // 再生ヘッド
   const cx=tToX(tNow);
   tctx.strokeStyle='#f59e0b'; tctx.beginPath(); tctx.moveTo(cx,0); tctx.lineTo(cx,TL.height); tctx.stroke();
 }
@@ -524,20 +543,39 @@ function drawTimeline(){
 let draggingKF=null, tlPanning=false, tlPanPrev=0;
 TL.addEventListener('contextmenu',e=>e.preventDefault());
 TL.addEventListener('mousedown',e=>{
-  if(e.button===1||e.button===2){ const r=TL.getBoundingClientRect(); tlPanning=true; tlPanPrev=e.clientX-r.left; return; }
+  // Shift+ドラッグで横パン
+  if(e.shiftKey){ const r=TL.getBoundingClientRect(); tlPanning=true; tlPanPrev=e.clientX-r.left; return; }
+
   if(e.button!==0) return;
   const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top;
-  const lane=laneIndexAtY(y); if(lane<0){ tNow=applySnap(xToT(x)); updateTimeLabel(); draw(); drawTimeline(); return; }
+  const lane=laneIndexAtY(y); if(lane<0){
+    // レーン外：再生位置移動
+    tNow=applySnap(xToT(x)); updateTimeLabel(); draw(); drawTimeline(); return;
+  }
   const it=items[lane];
 
+  // 左のロック/可視クリック
   if(x>=LEFT_PAD && x<LEFT_PAD+ICON_W_LOCK){ it.locked=!it.locked; drawTimeline(); syncPropPanel(); return; }
   if(x>=LEFT_PAD+ICON_W_LOCK && x<LEFT_PAD+ICON_W_LOCK+ICON_W_EYE){ it.visible=!it.visible; draw(); drawTimeline(); return; }
 
+  // Alt+クリック：最寄りKF削除
+  if(e.altKey && !it.locked){
+    const t=applySnap(xToT(x)); const kIdx = nearestKeyIndexAtTime(it, t);
+    if(kIdx>0){ // 先頭だけは残す（全削除防止）
+      pushUndo();
+      it.keys.splice(kIdx,1);
+      drawTimeline();
+    }
+    return;
+  }
+
+  // 選択更新
   const add = e.ctrlKey||e.metaKey;
   if(add){ if(isSelected(lane)) selected.delete(lane); else selected.add(lane); }
   else { selected = isSelected(lane) ? selected : new Set([lane]); }
   syncPropPanel();
 
+  // 既存キーフレームを掴む判定
   if(!it.locked && it.visible){
     const yMid=(laneTop+lane*(laneH+laneGap))+laneH/2; const th=10;
     for(let k=0;k<(it.keys||[]).length;k++){
@@ -547,8 +585,67 @@ TL.addEventListener('mousedown',e=>{
       }
     }
   }
+
+  // 既存を掴まなかった場合は再生位置移動
   tNow=applySnap(xToT(x)); updateTimeLabel(); draw(); drawTimeline();
 });
+
+// ダブルクリック：そのレーンのその時刻にキーフレーム追加
+TL.addEventListener('dblclick', (e)=>{
+  const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top;
+  const lane=laneIndexAtY(y); if(lane<0) return;
+  const it=items[lane]; if(!it || it.locked || !it.visible) return;
+
+  const t = applySnap(xToT(x));
+  // 既に同一時刻があれば何もしない（誤爆防止）
+  const eps=1/120;
+  if((it.keys||[]).some(k=>Math.abs(k.t - t)<eps)) return;
+
+  pushUndo();
+  // その時刻の補間位置を取得してキー作成
+  const stAtT = getStateAtTime(it, t);
+  if(!Array.isArray(it.keys)) it.keys=[];
+  it.keys.push({ t, x: stAtT.x, y: stAtT.y, rot: stAtT.rot ?? (it.rotation||0) });
+  it.keys.sort((a,b)=>a.t-b.t);
+
+  // ついでに選択もそのレーンへ
+  selected=new Set([lane]);
+  tNow = t; // 追加した位置にヘッドを移動
+  updateTimeLabel(); draw(); drawTimeline(); syncPropPanel();
+});
+
+function nearestKeyAtTime(it, t){
+  if(!it.keys || !it.keys.length) return null;
+  let best = it.keys[0], bd = Math.abs(it.keys[0].t - t);
+  for(const k of it.keys){
+    const d = Math.abs(k.t - t);
+    if(d < bd){ bd = d; best = k; }
+  }
+  return best;
+}
+function nearestKeyIndexAtTime(it, t){
+  if(!it.keys || !it.keys.length) return -1;
+  let bestI = 0, bd = Math.abs(it.keys[0].t - t);
+  for(let i=0;i<it.keys.length;i++){
+    const d = Math.abs(it.keys[i].t - t);
+    if(d < bd){ bd = d; bestI = i; }
+  }
+  return bestI;
+}
+function ensureKeyAtNow(it){
+  const eps=1/120; const idx=it.keys.findIndex(k=>Math.abs(k.t-tNow)<eps);
+  if(idx<0){
+    const st=getStateAtTime(it,tNow);
+    it.keys.push({t:tNow,x:st.x,y:st.y,rot:st.rot});
+    it.keys.sort((a,b)=>a.t-b.t);
+  }
+}
+function keyRefAtNow(it){
+  ensureKeyAtNow(it);
+  const eps=1/120;
+  return it.keys.find(k=>Math.abs(k.t-tNow)<eps) || nearestKeyAtTime(it,tNow);
+}
+
 function laneIndexAtY(y){ if(y<laneTop) return -1; const idx=Math.floor((y-laneTop)/(laneH+laneGap)); return (idx>=0&&idx<items.length)?idx:-1; }
 window.addEventListener('mousemove',e=>{
   if(tlPanning){
@@ -568,33 +665,9 @@ window.addEventListener('mouseup',()=>{ tlPanning=false; draggingKF=null; });
 let dragging=false, dragKind='item';
 let marqueeOn=false, marqueeStartCss=null;
 
-// グループドラッグ用：基準点（Canvas座標）と、各選択の初期値＋“確定したキー参照”
+// グループドラッグ用
 let groupDragAnchor = null; // {x,y} in Canvas
 let groupDragData = null;   // [{idx, x0, y0, key}]
-
-function nearestKeyAtTime(it, t){
-  if(!it.keys || !it.keys.length) return null;
-  let best = it.keys[0];
-  let bd = Math.abs(it.keys[0].t - t);
-  for(const k of it.keys){
-    const d = Math.abs(k.t - t);
-    if(d < bd){ bd = d; best = k; }
-  }
-  return best;
-}
-function ensureKeyAtNow(it){
-  const eps=1/120; const idx=it.keys.findIndex(k=>Math.abs(k.t-tNow)<eps);
-  if(idx<0){
-    const st=getStateAtTime(it,tNow);
-    it.keys.push({t:tNow,x:st.x,y:st.y,rot:st.rot});
-    it.keys.sort((a,b)=>a.t-b.t);
-  }
-}
-function keyRefAtNow(it){
-  ensureKeyAtNow(it);
-  const eps=1/120;
-  return it.keys.find(k=>Math.abs(k.t-tNow)<eps) || nearestKeyAtTime(it,tNow);
-}
 
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('mousedown',e=>{
@@ -621,16 +694,13 @@ canvas.addEventListener('mousedown',e=>{
     const it=items[i]; if(!showItems || !it.visible) continue; if(it.locked) continue;
     if(hitItem(it,w)){
       pushUndo();
-      if(e.ctrlKey||e.metaKey){
-        if(selected.has(i)) selected.delete(i); else selected.add(i);
-      }else{
-        selected = new Set([i]);
-      }
+      if(e.ctrlKey||e.metaKey){ if(selected.has(i)) selected.delete(i); else selected.add(i); }
+      else{ selected = new Set([i]); }
 
       groupDragAnchor = pCanvas;
       groupDragData = [...selected].map(idx=>{
         const st=getStateAtTime(items[idx], tNow);
-        const kr = keyRefAtNow(items[idx]); // mousedown時に固定
+        const kr = keyRefAtNow(items[idx]);
         return { idx, x0: st.x, y0: st.y, key: kr };
       });
 
@@ -668,7 +738,7 @@ canvas.addEventListener('mousemove',e=>{
 
   // パン
   if(panning && panPrev){
-    const cur=getPointer(e);
+    const cur=getPointer(e); // Canvas座標で追跡
     const dx=cur.x-panPrev.x, dy=cur.y-panPrev.y;
     setView(view.scale,view.x+dx,view.y+dy); panPrev=cur; return;
   }
@@ -706,7 +776,7 @@ window.addEventListener('mouseup',()=>{
   panning=false; panPrev=null;
 });
 
-// マルキー選択
+// マルキー選択（CSS→Canvas→World）
 function updateMarqueeSelection(curCssX, curCssY){
   const x1 = marqueeStartCss.x, y1 = marqueeStartCss.y;
   const x2 = curCssX,           y2 = curCssY;
@@ -725,7 +795,7 @@ function updateMarqueeSelection(curCssX, curCssY){
   syncPropPanel(); draw();
 }
 
-// スケール考慮ヒットテスト（回転は近似無視）
+// 置き換え：スケール考慮のヒットテスト（回転は近似無視）
 function hitItem(it, w){
   const st = getStateAtTime ? getStateAtTime(it, tNow) : { x: it.x, y: it.y, rot: it.rotation||0 };
   const sx = it.scaleX ?? 1;
@@ -743,6 +813,59 @@ function hitItem(it, w){
     return (Math.abs(w.x - st.x) <= hw && Math.abs(w.y - st.y) <= hh);
   }
 }
+
+// ====== キャンバス：ホイールでズーム & Spaceでパン ======
+canvas.addEventListener('wheel', (e)=>{
+  e.preventDefault();
+  const factor = Math.pow(1.001, -e.deltaY); // 下スクロールで拡大
+  const oldScale = view.scale;
+  const newScale = clamp(oldScale * factor, MIN_S, MAX_S);
+  const pCanvas = getPointer(e);
+  const world   = screenToWorld(pCanvas);   // ズーム前のワールド位置を固定
+  view.x = pCanvas.x - world.x * newScale;
+  view.y = pCanvas.y - world.y * newScale;
+  setView(newScale, view.x, view.y);
+}, { passive:false });
+
+window.addEventListener('keydown', (e)=>{
+  if(e.code === 'Space' && !spaceDown){
+    spaceDown = true;
+    canvas.style.cursor = 'grab';
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', (e)=>{
+  if(e.code === 'Space'){
+    spaceDown = false;
+    canvas.style.cursor = '';
+  }
+});
+
+// ====== TL：Ctrl+ホイールで横ズーム ======
+TL.addEventListener('wheel', (e)=>{
+  if(!e.ctrlKey) return; // 通常スクロールはそのまま
+  e.preventDefault();
+
+  const rect = TL.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+
+  const pad = 80;
+  const w = TL.width - pad - 16;
+  const vd_before = viewDur();
+  const t_at_cursor = tlStart + ((x - pad) / w) * vd_before;
+
+  const factor = Math.pow(1.001, -e.deltaY);
+  tlZoom = clamp(tlZoom * factor, 0.25, 4);
+
+  const vd_after = viewDur();
+  tlStart = t_at_cursor - ((x - pad) / w) * vd_after;
+  clampTlStart();
+
+  const tlZoomInput = document.getElementById('tlZoom');
+  if(tlZoomInput) tlZoomInput.value = String(tlZoom);
+
+  drawTimeline();
+}, { passive:false });
 
 // ====== プロパティパネル ======
 const propName=document.getElementById('propName');
@@ -797,7 +920,7 @@ document.getElementById('applyProps').onclick=()=>{
   const it=items[idx]; if(it.locked){ alert('このアイテムはロック中です。'); return; }
   pushUndo();
 
-  // 現在時刻キー確保→参照
+  // 現在時刻のキー参照
   ensureKeyAtNow(it);
   const eps=1/120;
   const k = it.keys.find(k=>Math.abs(k.t-tNow)<eps) || nearestKeyAtTime(it,tNow);
@@ -822,7 +945,7 @@ document.getElementById('applyProps').onclick=()=>{
   it.scaleX = sx;
   it.scaleY = sy;
 
-  // 残りプロパティ
+  // その他
   const maxR=Math.min(W,H)/2;
   it.name=propName.value||it.name;
   it.r=Math.max(1, Math.min(maxR, parseFloat(propSize.value)||it.r));
@@ -893,6 +1016,7 @@ function fitToFrame(){ const s=Math.min(canvas.width/W, canvas.height/H); const 
 
 // ====== 追加ボタン ======
 function addWithDefaults(obj){ items.push(obj); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); }
+
 document.getElementById('addIconBtn').onclick=()=>{ pushUndo(); const name=prompt('アイコン名（例: X1）')||'X'; const x=W*0.5, y=H*0.5; addWithDefaults({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x,y,rot:0}],locked:false,visible:true,scaleX:1,scaleY:1}); };
 document.getElementById('addCircleBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; addWithDefaults({type:'circle',name:'○',fill:'#0ea5e9',stroke:'#0a6fb2',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},w:80,h:80,text:'',keys:[{t:0,x,y,rot:0}],locked:false,visible:true,scaleX:1,scaleY:1}); };
 document.getElementById('addRectBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; addWithDefaults({type:'rect',name:'□',fill:'#ffffff',stroke:'#16a34a',textColor:'#111111',font:'system-ui',fontSize:20,w:200,h:120,alpha:1,rotation:0,pos:{x,y},r:40,text:'',keys:[{t:0,x,y,rot:0}],locked:false,visible:true,scaleX:1,scaleY:1}); };
@@ -916,8 +1040,8 @@ document.getElementById('addImageBtn').onclick=()=>{
         type:'image', name:file.name||'image', image:img, imageSrc:dataUrl,
         w:baseW, h:baseH,
         alpha:1, rotation:0, pos:{x,y},
-        scaleX:1, scaleY:1,
-        keys:[{t:0,x,y,rot:0}], locked:false, visible:true
+        keys:[{t:0,x,y,rot:0}], locked:false, visible:true,
+        scaleX:1, scaleY:1
       });
     };
     img.src=dataUrl;
@@ -941,7 +1065,7 @@ pauseBtn.onclick=()=>{ isPlaying=false; };
 resetTimeBtn.onclick=()=>{ tNow=0; updateTimeLabel(); draw(); drawTimeline(); };
 function loop(ts){ if(!isPlaying) return; if(!lastTs) lastTs=ts; const dt=(ts-lastTs)/1000; lastTs=ts; tNow+=dt; if(tNow>duration){ tNow=duration; isPlaying=false; } updateTimeLabel(); draw(); drawTimeline(); requestAnimationFrame(loop); }
 
-// ====== キーボード（Undo/Redo/Delete/Copy/Paste） ======
+// ====== キーボード（Undo/Redo, Delete, Copy/Paste） ======
 window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; const z=e.key.toLowerCase()==='z'; const y=e.key.toLowerCase()==='y'; if((e.ctrlKey||e.metaKey) && z && !e.shiftKey){ e.preventDefault(); undo(); } else if((e.ctrlKey||e.metaKey) && ( (z && e.shiftKey) || y )){ e.preventDefault(); redo(); } });
 window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; if(e.key==="Delete" || e.key==="Backspace"){ if(!selected.size) return; pushUndo(); const remain=[]; items.forEach((it,i)=>{ if(selected.has(i)&&!it.locked){} else remain.push(it); }); items=remain; selected.clear(); draw(); drawTimeline(); e.preventDefault(); return; } });
 
