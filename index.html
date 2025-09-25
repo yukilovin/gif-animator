@@ -3,184 +3,625 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>GIF Animator（ズレ修正版＋マルキー選択）</title>
+<title>Drag‑Path GIF Animator — Full Build</title>
 <style>
-  body{margin:0;background:#fff;color:#111827;font-family:sans-serif;height:100vh;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px;box-sizing:border-box}
-  aside{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;overflow:auto}
-  main{display:flex;flex-direction:column;align-items:center}
-  #canvas{background:#fff;border:2px solid #000;touch-action:none;display:block;margin-top:10px}
-  #timeline{width:100%;display:block;border:1px solid #e5e7eb;background:#f9fafb}
-  .marquee{position:absolute;border:1px dashed #60a5fa;background:rgba(59,130,246,.1);pointer-events:none}
+  :root{
+    --ink:#111827;--bg:#ffffff;--muted:#f3f4f6;--line:#e5e7eb;--accent:#2563eb;--accent2:#38bdf8;--warn:#ef4444;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px}
+  aside{background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:12px;overflow:auto;height:calc(100vh - 24px)}
+  main{display:flex;flex-direction:column;align-items:center;height:calc(100vh - 24px)}
+  h2{font-size:14px;margin:8px 0 6px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;cursor:pointer}
+  .btn.primary{border-color:var(--accent);color:#fff;background:var(--accent)}
+  .btn.warn{border-color:var(--warn);color:#fff;background:var(--warn)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  input[type="number"],input[type="text"],select{border:1px solid var(--line);border-radius:6px;padding:6px;background:#fff}
+  label{font-size:12px;color:#334155}
+  #canvas{background:#ffffff;border:2px solid #000;touch-action:none;display:block;margin-top:10px}
+  #timelineWrap{width:100%;max-width:1200px;margin-top:12px;padding:6px;background:#f3f4f6;border-radius:8px;border:1px solid #d1d5db}
+  #timeline{width:100%;height:120px;background:#fff;border:1px solid var(--line);position:relative;border-radius:8px;overflow:hidden}
+  .tick{position:absolute;top:0;bottom:0;width:1px;background:#e5e7eb}
+  .kf{position:absolute;top:30px;width:12px;height:12px;border:2px solid var(--accent);background:#fff;border-radius:2px;transform:translate(-6px,-6px) rotate(45deg);cursor:pointer}
+  .kf.sel{background:var(--accent)}
+  .layer{display:flex;align-items:center;gap:6px;padding:6px;border:1px solid var(--line);border-radius:8px;background:#fff;margin-bottom:6px}
+  .eye,.lock{width:18px;height:18px;border:1px solid var(--line);border-radius:4px;display:grid;place-items:center;cursor:pointer}
+  .eye.on{background:#e0f2fe;border-color:#7dd3fc}
+  .lock.on{background:#fee2e2;border-color:#fca5a5}
+  .layer.sel{outline:2px solid var(--accent2)}
+  .objList{margin-left:22px}
+  .obj{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:6px;cursor:pointer}
+  .obj.sel{background:#e0f2fe}
+  #scrubber{position:absolute;top:0;bottom:0;width:2px;background:var(--accent)}
+  .marquee{position:absolute;border:1px dashed #60a5fa;background:rgba(96,165,250,.12);pointer-events:none}
+  .badge{font-size:11px;color:#475569;background:#e2e8f0;border-radius:999px;padding:2px 6px}
+  .gridToggle{margin-left:auto}
+  .hint{font-size:12px;color:#64748b}
 </style>
 </head>
 <body>
   <aside>
-    <h1>設定</h1>
+    <h2>レイヤー</h2>
+    <div id="layers"></div>
+    <div class="row">
+      <button class="btn" id="addRect">長方形</button>
+      <button class="btn" id="addCircle">円</button>
+      <button class="btn" id="addText">テキスト</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn" id="addLayer">＋レイヤー</button>
+      <button class="btn warn" id="delSel">選択削除 (Del)</button>
+    </div>
+
+    <h2>選択 / 変形</h2>
+    <div class="row">
+      <label>X <input id="x" type="number" step="1" style="width:90px"></label>
+      <label>Y <input id="y" type="number" step="1" style="width:90px"></label>
+    </div>
+    <div class="row">
+      <label>W <input id="w" type="number" step="1" style="width:90px"></label>
+      <label>H <input id="h" type="number" step="1" style="width:90px"></label>
+    </div>
+    <div class="row">
+      <label>角度° <input id="rot" type="number" step="1" style="width:90px"></label>
+      <label>塗り <input id="fill" type="text" value="#222222" style="width:90px"></label>
+    </div>
+    <div class="row">
+      <button class="btn" id="kfPos">位置KF</button>
+      <button class="btn" id="kfRot">回転KF</button>
+      <button class="btn" id="kfSize">サイズKF</button>
+      <span class="hint">Shiftで複数選択 / Ctrl+C,V / 矢印で1px移動</span>
+    </div>
+
+    <h2>スナップ / 表示</h2>
+    <div class="row">
+      <label>グリッド <input id="grid" type="number" value="10" min="1" step="1" style="width:90px"></label>
+      <label class="gridToggle"><input type="checkbox" id="snap" checked> スナップ</label>
+      <label><input type="checkbox" id="showGrid" checked> グリッド表示</label>
+    </div>
+
+    <h2>タイムライン / 出力</h2>
+    <div class="row">
+      <label>長さ(s) <input id="dur" type="number" value="3" step="0.1" style="width:80px"></label>
+      <label>FPS <input id="fps" type="number" value="20" step="1" style="width:80px"></label>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn primary" id="play">▶ 再生</button>
+      <button class="btn" id="stop">■ 停止</button>
+      <button class="btn" id="exportJSON">JSON保存</button>
+      <button class="btn" id="exportPNGs">PNG書き出し</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn" id="importJSON">JSON読込</button>
+      <input type="file" id="fileInput" style="display:none" accept="application/json" />
+      <span class="badge">実験：GIFは別途ライブラリ導入で対応</span>
+    </div>
   </aside>
+
   <main>
-    <h1>GIF Animator</h1>
-    <div id="marquee" class="marquee" style="display:none"></div>
-    <canvas id="canvas" width="1080" height="1080"></canvas>
-    <div id="coordReadout">X:0 Y:0</div>
-    <canvas id="timeline" height="220"></canvas>
+    <div class="row" style="width:100%;max-width:1200px;align-items:center;justify-content:space-between">
+      <div class="row">
+        <span class="badge">座標: <span id="coord">x– y–</span></span>
+      </div>
+      <div class="row">
+        <label>キャンバス <input id="cw" type="number" value="640" style="width:80px"> × <input id="ch" type="number" value="360" style="width:80px"></label>
+        <button class="btn" id="resizeCanvas">変更</button>
+      </div>
+    </div>
+    <canvas id="canvas" width="640" height="360"></canvas>
+
+    <div id="timelineWrap">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <strong>タイムライン</strong>
+        <span class="hint">クリックでスクラブ / ダブルクリックで選択にKF追加</span>
+      </div>
+      <div id="timeline"></div>
+    </div>
   </main>
 
 <script>
-window.addEventListener('DOMContentLoaded',()=>{
-'use strict';
-const canvas=document.getElementById('canvas');
-const ctx=canvas.getContext('2d');
-const marqueeEl=document.getElementById('marquee');
+(function(){
+  // ====== State ======
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const TL = document.getElementById('timeline');
+  const layersEl = document.getElementById('layers');
 
-// === 画面座標 -> キャンバス座標 ===
-function getPointer(evt){
-  const rect = canvas.getBoundingClientRect();
-  const cssX = evt.clientX - rect.left;
-  const cssY = evt.clientY - rect.top;
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  return { x: cssX * scaleX, y: cssY * scaleY };
-}
-function cssToCanvas(px, py){
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  return { x:(px-rect.left)*scaleX, y:(py-rect.top)*scaleY };
-}
+  const state = {
+    layers: [], // [{id,name,visible,locked,objects:[obj,...]}]
+    selection: new Set(), // object ids
+    activeLayerId: null,
+    playing: false,
+    t: 0, // seconds
+    duration: 3,
+    fps: 20,
+    grid: 10,
+    snap: true,
+    showGrid: true,
+    marquee: null,
+    clipboard: null,
+  };
 
-// === スナップ ===
-let posSnap=true, posGrid=10;
-function snapDelta(d){ return posSnap ? Math.round(d/posGrid)*posGrid : d; }
+  // id helpers
+  const uid = (p='id') => p + '_' + Math.random().toString(36).slice(2,9);
 
-// === アイテム（複数でもOK） ===
-let items=[
-  {x:200,y:200,r:40,locked:false},
-  {x:360,y:260,r:40,locked:false}
-];
-
-let selected=new Set();
-let dragging=false, dragKind=null, groupDragAnchor=null, groupInitials=null;
-
-// ★ マルキー（範囲選択）用
-let marqueeOn=false;
-let marqueeStartCss=null; // CSSピクセルでの開始点
-
-function draw(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  for(const [i,it] of items.entries()){
-    ctx.beginPath();
-    ctx.arc(it.x,it.y,it.r,0,Math.PI*2);
-    ctx.fillStyle="#0ea5e9";
-    ctx.fill();
-    ctx.strokeStyle=selected.has(i)?"orange":"black";
-    ctx.lineWidth=2;
-    ctx.stroke();
+  // Object factory
+  function makeObj(type){
+    return {
+      id: uid('obj'), type,
+      x: 100, y: 100, w: 120, h: 80, r: 0,
+      fill: '#222222', stroke: '#000000', strokeW: 1,
+      text: type==='text' ? 'テキスト' : '',
+      keyframes: { // per-prop arrays [{t,value}]
+        x:[], y:[], w:[], h:[], r:[]
+      },
+    };
   }
-}
 
-// === 当たり判定（円）
-function hitIndexAt(p){
-  for(let i=items.length-1;i>=0;i--){
-    const it=items[i], dx=p.x-it.x, dy=p.y-it.y;
-    if(dx*dx+dy*dy<=it.r*it.r) return i;
+  function makeLayer(name){
+    return { id: uid('layer'), name, visible:true, locked:false, objects:[] };
   }
-  return -1;
-}
 
-// === マルキー矩形で選択更新
-function updateMarqueeSelection(curCssX, curCssY){
-  const x1 = marqueeStartCss.x, y1 = marqueeStartCss.y;
-  const x2 = curCssX,           y2 = curCssY;
-  const minCssX = Math.min(x1,x2), minCssY = Math.min(y1,y2);
-  const maxCssX = Math.max(x1,x2), maxCssY = Math.max(y1,y2);
-  const p1 = cssToCanvas(minCssX, minCssY);
-  const p2 = cssToCanvas(maxCssX, maxCssY);
-
-  selected.clear();
-  for(let i=0;i<items.length;i++){
-    const it=items[i];
-    if(it.x>=p1.x && it.x<=p2.x && it.y>=p1.y && it.y<=p2.y) selected.add(i);
+  // ====== Init with one layer ======
+  function init(){
+    const base = makeLayer('レイヤー 1');
+    state.layers.push(base);
+    state.activeLayerId = base.id;
+    renderUI();
+    draw();
   }
-  draw();
-}
 
-// === mousedown ===
-canvas.addEventListener('mousedown',e=>{
-  const p=getPointer(e);
-  const hit = hitIndexAt(p);
+  // ====== Rendering ======
+  function clear(){ ctx.clearRect(0,0,canvas.width,canvas.height); }
 
-  if(hit>=0){
-    // Ctrl/⌘ でトグル選択、無ければ単独選択
-    if(e.ctrlKey||e.metaKey){
-      if(selected.has(hit)) selected.delete(hit); else selected.add(hit);
-    }else{
-      selected = new Set([hit]);
+  function drawGrid(){
+    if(!state.showGrid) return;
+    const g = state.grid;
+    ctx.save();
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.lineWidth = 1;
+    for(let x=0;x<=canvas.width;x+=g){
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke();
+    }
+    for(let y=0;y<=canvas.height;y+=g){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function applyKF(obj){
+    // linear interpolation for props at current time state.t
+    const props = ['x','y','w','h','r'];
+    props.forEach(p=>{
+      const arr = obj.keyframes[p];
+      if(!arr || arr.length===0) return;
+      const t = state.t;
+      // find surrounding kfs
+      let a = arr[0], b = arr[arr.length-1];
+      for(let i=0;i<arr.length;i++){
+        if(arr[i].t<=t) a = arr[i];
+        if(arr[i].t>=t){ b = arr[i]; break; }
+      }
+      if(a.t===b.t){ obj[p] = a.v; }
+      else{
+        const k = (t - a.t)/(b.t - a.t);
+        obj[p] = a.v + (b.v - a.v)*k;
+      }
+    });
+  }
+
+  function draw(){
+    clear();
+    drawGrid();
+    // draw visible layers in order
+    for(const layer of state.layers){
+      if(!layer.visible) continue;
+      for(const obj of layer.objects){
+        // preview at interpolated pose
+        const snapshot = {...obj};
+        applyKF(snapshot);
+        const sel = state.selection.has(obj.id);
+        drawObj(snapshot, sel);
+      }
+    }
+    if(state.marquee){ drawMarquee(state.marquee); }
+  }
+
+  function drawObj(o, sel){
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    ctx.rotate(o.r * Math.PI/180);
+    ctx.fillStyle = o.fill || '#222';
+    ctx.strokeStyle = o.stroke || '#000';
+    ctx.lineWidth = o.strokeW || 1;
+
+    if(o.type==='rect'){
+      ctx.fillRect(-o.w/2, -o.h/2, o.w, o.h);
+      ctx.strokeRect(-o.w/2, -o.h/2, o.w, o.h);
+    } else if(o.type==='circle'){
+      ctx.beginPath(); ctx.ellipse(0,0,o.w/2,o.h/2,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    } else if(o.type==='text'){
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.font = `${Math.max(12, o.h|0)}px sans-serif`;
+      ctx.fillText(o.text||'',0,0);
+      ctx.strokeText('',0,0);
     }
 
-    // クリック地点を握ってドラッグ
-    dragging=true; dragKind='items';
-    groupDragAnchor={x:p.x,y:p.y};
-    groupInitials=[...selected].map(idx=>{
-      const it=items[idx];
-      return {idx, x0:it.x, y0:it.y};
+    // selection box
+    if(sel){
+      ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2; ctx.setLineDash([6,4]);
+      ctx.strokeRect(-o.w/2, -o.h/2, o.w, o.h);
+      ctx.setLineDash([]);
+    }
+
+    ctx.restore();
+  }
+
+  function drawMarquee(m){
+    let el = document.getElementById('marquee');
+    if(!el){ el = document.createElement('div'); el.id='marquee'; el.className='marquee'; canvas.parentElement.appendChild(el); }
+    const x = Math.min(m.x0, m.x1), y = Math.min(m.y0, m.y1);
+    const w = Math.abs(m.x1 - m.x0), h = Math.abs(m.y1 - m.y0);
+    el.style.left = canvas.offsetLeft + x + 'px';
+    el.style.top = canvas.offsetTop + y + 'px';
+    el.style.width = w + 'px';
+    el.style.height = h + 'px';
+  }
+
+  function clearMarquee(){
+    const el = document.getElementById('marquee');
+    if(el) el.remove();
+  }
+
+  // ====== Hit testing (pointer-precision) ======
+  function screenToCanvas(px, py){
+    const rect = canvas.getBoundingClientRect();
+    const x = (px - rect.left) * (canvas.width / rect.width);
+    const y = (py - rect.top) * (canvas.height / rect.height);
+    return {x,y};
+  }
+
+  function pointInObj(x, y, o){
+    // inverse transform point by rotation/translation
+    const cos = Math.cos(-o.r*Math.PI/180), sin = Math.sin(-o.r*Math.PI/180);
+    const dx = x - o.x, dy = y - o.y;
+    const lx = dx*cos - dy*sin, ly = dx*sin + dy*cos; // local coords
+    if(o.type==='rect' || o.type==='text'){
+      return Math.abs(lx) <= o.w/2 && Math.abs(ly) <= o.h/2;
+    } else if(o.type==='circle'){
+      const rx = lx/(o.w/2), ry = ly/(o.h/2);
+      return (rx*rx + ry*ry) <= 1;
+    }
+    return false;
+  }
+
+  function hitTest(x,y){
+    // search top-most first honoring layer order, visibility, lock
+    for(let li=state.layers.length-1; li>=0; li--){
+      const layer = state.layers[li];
+      if(!layer.visible) continue;
+      for(let i=layer.objects.length-1; i>=0; i--){
+        const o = layer.objects[i];
+        if(pointInObj(x,y,o)) return {layer, obj:o};
+      }
+    }
+    return null;
+  }
+
+  // ====== Timeline UI ======
+  function renderTimeline(){
+    TL.innerHTML = '';
+    const w = TL.clientWidth, h = TL.clientHeight;
+    // ticks
+    for(let s=0; s<=state.duration; s+=0.5){
+      const x = s/state.duration * w;
+      const t = document.createElement('div'); t.className='tick'; t.style.left = x+'px';
+      TL.appendChild(t);
+    }
+    // scrubber
+    const scr = document.createElement('div'); scr.id='scrubber'; scr.style.left = (state.t/state.duration*w)+'px';
+    TL.appendChild(scr);
+    // keyframes for selected objects only
+    const selObjs = getSelectedObjects();
+    selObjs.forEach((o,idx)=>{
+      ['x','y','w','h','r'].forEach((prop,pi)=>{
+        const arr = (o.keyframes && o.keyframes[prop]) ? o.keyframes[prop] : [];
+        arr.forEach(kf=>{
+          const el = document.createElement('div'); el.className='kf';
+          const x = (kf.t/state.duration)*w; el.style.left = x+'px';
+          const y = 24 + (idx*24) + (pi*2); el.style.top = y+'px';
+          TL.appendChild(el);
+        });
+      });
     });
-    draw();
-    return;
   }
 
-  // 空白：マルキー開始（CSS基準で矩形を表示）
-  marqueeOn = true;
-  marqueeStartCss = { x: e.clientX, y: e.clientY };
-  marqueeEl.style.display = 'block';
-  marqueeEl.style.left = `${e.clientX}px`;
-  marqueeEl.style.top  = `${e.clientY}px`;
-  marqueeEl.style.width = '0px';
-  marqueeEl.style.height= '0px';
-  updateMarqueeSelection(e.clientX, e.clientY);
-});
+  function timeFromX(px){ const w = TL.clientWidth; return Math.max(0, Math.min(state.duration, px/w*state.duration)); }
 
-// === mousemove ===
-canvas.addEventListener('mousemove',e=>{
-  // マルキー中は矩形更新＆選択更新
-  if(marqueeOn && marqueeStartCss){
-    const x1 = marqueeStartCss.x, y1 = marqueeStartCss.y;
-    const x2 = e.clientX,        y2 = e.clientY;
-    const left = Math.min(x1,x2), top = Math.min(y1,y2);
-    const w = Math.abs(x2-x1),   h   = Math.abs(y2-y1);
-    marqueeEl.style.left = `${left}px`;
-    marqueeEl.style.top  = `${top}px`;
-    marqueeEl.style.width = `${w}px`;
-    marqueeEl.style.height= `${h}px`;
-    updateMarqueeSelection(x2, y2);
-    return;
+  // ====== UI (layers & selection) ======
+  function renderUI(){
+    // layers
+    layersEl.innerHTML = '';
+    state.layers.forEach(layer=>{
+      const row = document.createElement('div'); row.className='layer' + (state.activeLayerId===layer.id?' sel':'');
+      row.onclick = (e)=>{ state.activeLayerId = layer.id; renderUI(); };
+      const eye = document.createElement('div'); eye.className='eye'+(layer.visible?' on':''); eye.title='表示/非表示';
+      eye.onclick = (e)=>{ e.stopPropagation(); layer.visible=!layer.visible; draw(); renderUI(); };
+      const lock = document.createElement('div'); lock.className='lock'+(layer.locked?' on':''); lock.title='ロック';
+      lock.onclick = (e)=>{ e.stopPropagation(); layer.locked=!layer.locked; renderUI(); };
+      const name = document.createElement('div'); name.textContent = layer.name; name.style.flex='1';
+      row.appendChild(eye); row.appendChild(lock); row.appendChild(name);
+
+      // objects
+      const ol = document.createElement('div'); ol.className='objList';
+      layer.objects.forEach(o=>{
+        const li = document.createElement('div'); li.className='obj'+(state.selection.has(o.id)?' sel':'');
+        li.textContent = `${o.type} (${o.id.slice(-4)})`;
+        li.onclick = (e)=>{ e.stopPropagation(); selectObject(o.id, e.shiftKey); };
+        ol.appendChild(li);
+      });
+      row.appendChild(ol);
+      layersEl.appendChild(row);
+    });
+
+    // side form reflect primary selection (first in set)
+    const first = getPrimarySelection();
+    const bind = (id,val)=>document.getElementById(id).value = val ?? '';
+    if(first){
+      bind('x', first.x|0); bind('y', first.y|0); bind('w', first.w|0); bind('h', first.h|0); bind('rot', first.r|0); bind('fill', first.fill||'#222222');
+    } else {
+      bind('x',''); bind('y',''); bind('w',''); bind('h',''); bind('rot','');
+    }
+
+    // timeline
+    renderTimeline();
   }
 
-  // アイテムを掴んでいるとき
-  if(!dragging || !groupDragAnchor) return;
-  const p=getPointer(e);
-  const dx=p.x-groupDragAnchor.x, dy=p.y-groupDragAnchor.y;
+  function getActiveLayer(){ return state.layers.find(l=>l.id===state.activeLayerId) || state.layers[0]; }
+  function getAllObjects(){ return state.layers.flatMap(l=>l.objects); }
+  function getSelectedObjects(){ const ids = state.selection; return getAllObjects().filter(o=>ids.has(o.id)); }
+  function getPrimarySelection(){ const arr = Array.from(state.selection); if(arr.length===0) return null; return getAllObjects().find(o=>o.id===arr[0]); }
 
-  for(const s of groupInitials){
-    const it=items[s.idx];
-    it.x = s.x0 + snapDelta(dx);
-    it.y = s.y0 + snapDelta(dy);
+  function selectObject(id, additive){
+    const layer = getActiveLayer();
+    // ignore if object is in locked layer
+    const objLayer = state.layers.find(l=>l.objects.some(o=>o.id===id));
+    if(objLayer?.locked) return;
+    if(!additive) state.selection.clear();
+    if(state.selection.has(id) && additive){ state.selection.delete(id); }
+    else state.selection.add(id);
+    renderUI(); draw();
   }
-  draw();
-});
 
-// === mouseup ===
-window.addEventListener('mouseup',()=>{
-  if(marqueeOn){
-    marqueeOn=false;
-    marqueeStartCss=null;
-    marqueeEl.style.display='none';
+  // ====== Object creation ======
+  function addObject(type){
+    const layer = getActiveLayer(); if(!layer || layer.locked) return;
+    const o = makeObj(type);
+    o.x = canvas.width/2; o.y = canvas.height/2;
+    layer.objects.push(o);
+    state.selection = new Set([o.id]);
+    renderUI(); draw();
   }
-  dragging=false; dragKind=null; groupDragAnchor=null; groupInitials=null;
-});
 
-// === 初期描画 ===
-draw();
-});
+  // ====== Events (canvas) ======
+  let dragging = null; // {ids:Set, dx,dy}
+  let isMarquee = false;
+
+  canvas.addEventListener('pointerdown', (e)=>{
+    canvas.setPointerCapture(e.pointerId);
+    const p = screenToCanvas(e.clientX,e.clientY);
+    const hit = hitTest(p.x,p.y);
+    const grid = state.grid, snap = state.snap;
+
+    if(hit && !state.layers.find(l=>l.id===state.activeLayerId)?.locked){
+      // If clicking inside an object: pointer-precision selection
+      const inSel = state.selection.has(hit.obj.id);
+      if(!inSel){ selectObject(hit.obj.id, e.shiftKey); }
+      const selObjs = getSelectedObjects();
+      dragging = {ids:new Set(selObjs.map(o=>o.id)), start:p, dx:0, dy:0};
+    } else {
+      // start marquee
+      state.selection.clear();
+      state.marquee = {x0:p.x,y0:p.y,x1:p.x,y1:p.y};
+      isMarquee = true; draw();
+    }
+  });
+
+  canvas.addEventListener('pointermove', (e)=>{
+    const p = screenToCanvas(e.clientX,e.clientY);
+    document.getElementById('coord').textContent = `${p.x|0}, ${p.y|0}`;
+
+    if(dragging){
+      dragging.dx = p.x - dragging.start.x;
+      dragging.dy = p.y - dragging.start.y;
+      const sel = getSelectedObjects();
+      sel.forEach(o=>{
+        let nx = o.x + dragging.dx, ny = o.y + dragging.dy;
+        if(state.snap){ nx = Math.round(nx/state.grid)*state.grid; ny = Math.round(ny/state.grid)*state.grid; }
+        o.x = nx; o.y = ny;
+      });
+      dragging.start = p; // incremental move for stability
+      draw(); renderUI();
+    }
+
+    if(isMarquee && state.marquee){
+      state.marquee.x1 = p.x; state.marquee.y1 = p.y; draw();
+    }
+  });
+
+  window.addEventListener('pointerup', (e)=>{
+    if(dragging){ dragging=null; }
+    if(isMarquee && state.marquee){
+      const m = state.marquee; const x = Math.min(m.x0,m.x1), y=Math.min(m.y0,m.y1), w=Math.abs(m.x1-m.x0), h=Math.abs(m.y1-m.y0);
+      const within = (o)=>{
+        // check bbox containment at current pose
+        const left = o.x - o.w/2, top = o.y - o.h/2, right = o.x + o.w/2, bottom = o.y + o.h/2; // approx ignoring rotation
+        return (left>=x && right<=x+w && top>=y && bottom<=y+h);
+      };
+      state.selection.clear();
+      for(const layer of state.layers){ if(!layer.visible) continue; for(const o of layer.objects){ if(within(o)) state.selection.add(o.id); }}
+      state.marquee=null; clearMarquee(); isMarquee=false; renderUI(); draw();
+    }
+  }, true);
+
+  // Double click timeline to add KFs for selection
+  TL.addEventListener('dblclick', (e)=>{
+    const rect = TL.getBoundingClientRect();
+    const t = timeFromX(e.clientX - rect.left);
+    addKFToSelection(t);
+  });
+
+  // Scrub on click/drag
+  let scrubbing=false;
+  TL.addEventListener('pointerdown',(e)=>{ scrubbing=true; TL.setPointerCapture(e.pointerId); moveScrubber(e); });
+  TL.addEventListener('pointermove',moveScrubber);
+  TL.addEventListener('pointerup',()=>{ scrubbing=false; });
+  function moveScrubber(e){
+    if(!scrubbing) return; const rect = TL.getBoundingClientRect(); state.t = timeFromX(e.clientX-rect.left); draw(); renderTimeline(); }
+
+  // ====== Keyframes ======
+  function addKF(o, prop, t, v){
+    const arr = o.keyframes[prop];
+    // replace if very close in time
+    const i = arr.findIndex(k=>Math.abs(k.t - t) < (1/state.fps));
+    if(i>=0) arr[i] = {t,v}; else { arr.push({t,v}); arr.sort((a,b)=>a.t-b.t); }
+  }
+
+  function addKFToSelection(t){
+    const sel = getSelectedObjects(); if(sel.length===0) return;
+    sel.forEach(o=>{
+      addKF(o,'x',t,o.x); addKF(o,'y',t,o.y); addKF(o,'w',t,o.w); addKF(o,'h',t,o.h); addKF(o,'r',t,o.r);
+    });
+    renderTimeline();
+  }
+
+  // ====== Playback ======
+  let rafId=null, lastTs=null;
+  function tick(ts){
+    if(lastTs==null) lastTs = ts;
+    const dt = (ts - lastTs)/1000; lastTs = ts;
+    state.t += dt; if(state.t>state.duration) state.t = 0;
+    draw(); renderTimeline();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // ====== Export ======
+  async function exportPNGs(){
+    const wasPlaying = state.playing; stop();
+    const oldT = state.t;
+    const frames = Math.max(1, Math.round(state.duration * state.fps));
+    for(let i=0;i<frames;i++){
+      state.t = i/state.fps; draw();
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a'); a.href=url; a.download = `frame_${String(i).padStart(4,'0')}.png`; document.body.appendChild(a); a.click(); a.remove();
+      await new Promise(r=>setTimeout(r, 10)); // allow download to start
+    }
+    state.t = oldT; draw(); renderTimeline();
+    if(wasPlaying) play();
+  }
+
+  function saveJSON(){
+    const data = {version:1, canvas:{w:canvas.width,h:canvas.height}, duration:state.duration,fps:state.fps, layers:state.layers};
+    const blob = new Blob([JSON.stringify(data)],{type:'application/json'});
+    const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='anim.json'; a.click();
+  }
+
+  function loadJSON(obj){
+    stop();
+    canvas.width = obj.canvas.w; canvas.height = obj.canvas.h;
+    state.duration = obj.duration; state.fps = obj.fps; state.layers = obj.layers; state.activeLayerId = (obj.layers[0]||{}).id;
+    state.selection.clear();
+    renderUI(); draw();
+  }
+
+  // ====== Controls & bindings ======
+  document.getElementById('addRect').onclick = ()=>addObject('rect');
+  document.getElementById('addCircle').onclick = ()=>addObject('circle');
+  document.getElementById('addText').onclick = ()=>addObject('text');
+  document.getElementById('addLayer').onclick = ()=>{ state.layers.push(makeLayer('レイヤー '+(state.layers.length+1))); renderUI(); };
+
+  document.getElementById('delSel').onclick = ()=>{
+    const ids = new Set(state.selection);
+    state.layers.forEach(l=>{ l.objects = l.objects.filter(o=>!ids.has(o.id)); });
+    state.selection.clear(); renderUI(); draw();
+  };
+
+  // side inputs
+  function linkInput(id, apply){ const el = document.getElementById(id); el.addEventListener('change',()=>{ const sel = getSelectedObjects(); if(sel.length===0) return; sel.forEach(apply); draw(); renderUI(); }); }
+  linkInput('x', v=>v.x=parseFloat(document.getElementById('x').value||0));
+  linkInput('y', v=>v.y=parseFloat(document.getElementById('y').value||0));
+  linkInput('w', v=>v.w=Math.max(1,parseFloat(document.getElementById('w').value||1)));
+  linkInput('h', v=>v.h=Math.max(1,parseFloat(document.getElementById('h').value||1)));
+  linkInput('rot', v=>v.r=parseFloat(document.getElementById('rot').value||0));
+  linkInput('fill', v=>v.fill=document.getElementById('fill').value||'#222222');
+
+  document.getElementById('grid').onchange = (e)=>{ state.grid = Math.max(1, parseInt(e.target.value||10)); draw(); };
+  document.getElementById('snap').onchange = (e)=>{ state.snap = !!e.target.checked; };
+  document.getElementById('showGrid').onchange = (e)=>{ state.showGrid = !!e.target.checked; draw(); };
+
+  document.getElementById('dur').onchange = (e)=>{ state.duration = Math.max(0.1, parseFloat(e.target.value||3)); renderTimeline(); };
+  document.getElementById('fps').onchange = (e)=>{ state.fps = Math.max(1, parseInt(e.target.value||20)); };
+
+  document.getElementById('kfPos').onclick = ()=>{ addKFToSelection(state.t); };
+  document.getElementById('kfRot').onclick = ()=>{
+    const sel = getSelectedObjects(); sel.forEach(o=>addKF(o,'r',state.t,o.r)); renderTimeline(); };
+  document.getElementById('kfSize').onclick = ()=>{
+    const sel = getSelectedObjects(); sel.forEach(o=>{ addKF(o,'w',state.t,o.w); addKF(o,'h',state.t,o.h); }); renderTimeline(); };
+
+  function play(){ if(state.playing) return; state.playing=true; lastTs=null; rafId=requestAnimationFrame(tick); }
+  function stop(){ if(!state.playing) return; state.playing=false; cancelAnimationFrame(rafId); rafId=null; }
+  document.getElementById('play').onclick = ()=>{ state.playing ? stop() : play(); document.getElementById('play').textContent = state.playing? '⏸ 一時停止':'▶ 再生'; };
+  document.getElementById('stop').onclick = ()=>{ stop(); state.t=0; draw(); renderTimeline(); document.getElementById('play').textContent='▶ 再生'; };
+
+  document.getElementById('exportJSON').onclick = saveJSON;
+  document.getElementById('exportPNGs').onclick = exportPNGs;
+
+  document.getElementById('importJSON').onclick = ()=> document.getElementById('fileInput').click();
+  document.getElementById('fileInput').addEventListener('change', async (e)=>{
+    const f = e.target.files[0]; if(!f) return; const txt = await f.text(); const obj = JSON.parse(txt); loadJSON(obj);
+  });
+
+  document.getElementById('resizeCanvas').onclick = ()=>{
+    const w = parseInt(document.getElementById('cw').value||640);
+    const h = parseInt(document.getElementById('ch').value||360);
+    canvas.width = Math.max(16,w); canvas.height = Math.max(16,h); draw();
+  };
+
+  // ====== Keyboard ======
+  window.addEventListener('keydown', (e)=>{
+    const sel = getSelectedObjects();
+    if(e.key==='Delete'){ document.getElementById('delSel').click(); }
+    const step = e.shiftKey?10:1;
+    if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
+      e.preventDefault();
+      sel.forEach(o=>{
+        if(e.key==='ArrowUp') o.y -= step;
+        if(e.key==='ArrowDown') o.y += step;
+        if(e.key==='ArrowLeft') o.x -= step;
+        if(e.key==='ArrowRight') o.x += step;
+        if(state.snap){ o.x = Math.round(o.x/state.grid)*state.grid; o.y = Math.round(o.y/state.grid)*state.grid; }
+      });
+      draw(); renderUI();
+    }
+
+    // copy / paste
+    if(e.ctrlKey && e.key.toLowerCase()==='c'){
+      state.clipboard = sel.map(o=>JSON.parse(JSON.stringify(o)));
+    }
+    if(e.ctrlKey && e.key.toLowerCase()==='v'){
+      const layer = getActiveLayer(); if(!layer || !state.clipboard) return;
+      const clones = state.clipboard.map(o=>{ const c = JSON.parse(JSON.stringify(o)); c.id = uid('obj'); c.x += 10; c.y += 10; return c; });
+      layer.objects.push(...clones);
+      state.selection = new Set(clones.map(c=>c.id));
+      renderUI(); draw();
+    }
+  });
+
+  // ====== Start ======
+  init();
+})();
 </script>
 </body>
 </html>
