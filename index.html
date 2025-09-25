@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Drag-Path GIF Animator — 複数選択修正/画像/色/透明度/Undo/ロック/保存/タイムラインでKF追加</title>
+<title>Drag-Path GIF Animator — 高速ドラッグ版</title>
 <style>
   body{margin:0;background:#ffffff;color:#111827;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;height:100vh;display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px;box-sizing:border-box}
   aside{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;overflow:auto}
@@ -142,7 +142,7 @@
     </div>
 
     <div class="panel">
-      <h2>キーフレーム（ボタン）</h2>
+      <h2>キーフレーム</h2>
       <div class="row">
         <button class="btn" id="addKF">＋ KF追加（現在時刻）</button>
         <button class="btn" id="delKF">－ KF削除（最後）</button>
@@ -152,9 +152,6 @@
         <label><input type="checkbox" id="snapKeys" checked> TLスナップ</label>
         <span class="pill">間隔 <input type="number" id="snapStep" value="0.10" step="0.01" style="width:60px">s</span>
       </div>
-      <div class="row">
-        <span class="muted">TL操作：ダブルクリックでそのレーンにKF追加 ／ Alt+クリック＝最寄りKF削除 ／ 既存ダイヤはドラッグで移動</span>
-      </div>
     </div>
 
     <div class="panel">
@@ -163,27 +160,20 @@
         <label><input type="checkbox" id="posSnapOn" checked> 座標スナップON</label>
         <label>グリッド(px) <input type="number" id="posSnapGrid" value="10" min="1" max="512"></label>
       </div>
+      <div class="row">
+        <label><input type="checkbox" id="dragSnapDisable" checked> ドラッグ中はスナップ無効（離すとスナップ）</label>
+      </div>
     </div>
 
     <div class="panel">
       <h2>タイムライン</h2>
-      <div class="row">
-        <label>表示高(px) <input type="number" id="tlViewportH" value="220" min="140" max="600"></label>
-        <label>横ズーム <input type="range" id="tlZoom" min="0.25" max="4" step="0.01" value="1"></label>
-        <label>全体秒数 <input type="number" id="duration" value="8" min="1" max="120"></label>
-      </div>
-      <div class="row">
-        <span class="pill">Ctrl+ホイール：横ズーム ／ Shift+ドラッグ：横パン ／ 縦スクロール：レーンスクロール</span>
-      </div>
+      <div class="row"><label>表示高(px) <input type="number" id="tlViewportH" value="220" min="140" max="600"></label><label>横ズーム <input type="range" id="tlZoom" min="0.25" max="4" step="0.01" value="1"></label><label>全体秒数 <input type="number" id="duration" value="8" min="1" max="120"></label></div>
+      <div class="row"><span class="pill">Ctrl+ホイール：横ズーム ／ Shift+ドラッグ：横パン ／ ダブルクリック：そのレーンにKF追加</span></div>
     </div>
 
     <div class="panel">
       <h2>ビュー操作（キャンバス）</h2>
-      <div class="row">
-        <button class="btn" id="fitView">↙↗ フィット</button>
-        <button class="btn" id="centerIcons">◎ アイテム中央</button>
-        <button class="btn" id="resetView">⟲ リセット</button>
-      </div>
+      <div class="row"><button class="btn" id="fitView">↙↗ フィット</button><button class="btn" id="centerIcons">◎ アイテム中央</button><button class="btn" id="resetView">⟲ リセット</button></div>
       <div class="row"><span class="pill">ズーム：ホイール ／ パン：右/中 or Space+ドラッグ</span></div>
     </div>
 
@@ -250,24 +240,30 @@ const timeLabel=document.getElementById('timeLabel');
 const coordReadout=document.getElementById('coordReadout');
 const marqueeEl=document.getElementById('marquee');
 
-// 小ユーティリティ
 function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
 
-// ===== 座標変換（CSS→Canvas→World） =====
-function getPointer(evt){
+// ===== 座標変換キャッシュ =====
+let pointerCache = { rect:null, sx:1, sy:1 };
+function refreshPointerCache(){
   const rect = canvas.getBoundingClientRect();
-  const cssX = evt.clientX - rect.left;
-  const cssY = evt.clientY - rect.top;
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  return { x: cssX * scaleX, y: cssY * scaleY }; // Canvas座標
+  pointerCache.rect = rect;
+  pointerCache.sx = canvas.width / rect.width;
+  pointerCache.sy = canvas.height / rect.height;
+}
+function getPointerCanvasXY(evt){
+  // PointerEventなら clientX/Y を使う（マルチ入力安定）
+  const r = pointerCache.rect || canvas.getBoundingClientRect();
+  const sx = pointerCache.sx || (canvas.width / r.width);
+  const sy = pointerCache.sy || (canvas.height / r.height);
+  return { x: (evt.clientX - r.left) * sx, y: (evt.clientY - r.top) * sy };
 }
 function cssToCanvas(px, py){
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  return { x:(px-rect.left)*scaleX, y:(py-rect.top)*scaleY };
+  const r = pointerCache.rect || canvas.getBoundingClientRect();
+  const sx = pointerCache.sx || (canvas.width / r.width);
+  const sy = pointerCache.sy || (canvas.height / r.height);
+  return { x:(px-r.left)*sx, y:(py-r.top)*sy };
 }
+window.addEventListener('resize', refreshPointerCache);
 
 // ====== 時間管理 ======
 let duration=8; let tNow=0; let isPlaying=false; let lastTs=0;
@@ -275,8 +271,8 @@ function updateTimeLabel(){ timeLabel.textContent=tNow.toFixed(2); }
 
 // ====== ビュー（ズーム/パン） ======
 const MIN_S=0.3, MAX_S=4; let view={scale:1,x:0,y:0}; let panning=false, panPrev=null, spaceDown=false;
-function setView(scale,x,y){ view.scale=Math.max(MIN_S,Math.min(MAX_S,scale)); view.x=x; view.y=y; draw(); }
-function screenToWorld(p/*Canvas座標*/){ return {x:(p.x-view.x)/view.scale, y:(p.y-view.y)/view.scale}; }
+function setView(scale,x,y){ view.scale=clamp(scale,MIN_S,MAX_S); view.x=x; view.y=y; needRedraw=true; }
+function screenToWorld(p){ return {x:(p.x-view.x)/view.scale, y:(p.y-view.y)/view.scale}; }
 
 // ====== TL ======
 let tlZoom=1, tlStart=0; const laneH=24,laneGap=12,laneTop=48;
@@ -290,25 +286,25 @@ function ensureTimelineCanvasHeight(){ const need=laneTop + items.length*(laneH+
 // ====== スナップ ======
 let snapOn=true, snapStep=0.10;
 let posSnap=true, posGrid=10;
+const dragSnapDisableEl = document.getElementById('dragSnapDisable');
+let dragSnapDisable = true;
+dragSnapDisableEl.addEventListener('change', ()=>{ dragSnapDisable = !!dragSnapDisableEl.checked; });
 function applySnap(t){ if(!snapOn) return clamp01(t,0,duration); const s=Math.round(t/Math.max(0.01,snapStep))*Math.max(0.01,snapStep); return clamp01(+s.toFixed(6),0,duration); }
 function snapDelta(d){ return posSnap ? Math.round(d/posGrid)*posGrid : d; }
 function snapCoord(v){ return posSnap ? Math.round(v/posGrid)*posGrid : v; }
 function clamp01(v,min,max){ return Math.max(min,Math.min(max,v)); }
 
-// ====== レイヤー表示/ロック（Targetsは初期なし） ======
+// ====== レイヤー ======
 let showTargets=false, showItems=true, targetsLocked=false;
 let targets=[];
 
 // ====== アイテム ======
-/** item: {type, name, fill, stroke, textColor, font, fontSize, r, w, h, text, alpha, rotation, pos:{x,y}, keys:[{t,x,y,rot}], locked?:boolean, visible?:boolean, image?:HTMLImageElement, imageSrc?:string, scaleX?, scaleY?} */
-let items=[]; // 初期は空
-
-function ensureScaleDefaults() { for (const it of items) { if (it.scaleX == null) it.scaleX = 1; if (it.scaleY == null) it.scaleY = 1; } }
+let items=[];
+function ensureScaleDefaults(){ for (const it of items){ if (it.scaleX == null) it.scaleX = 1; if (it.scaleY == null) it.scaleY = 1; } }
 ensureScaleDefaults();
 
-// 選択（複数）
+// 選択
 let selected=new Set();
-function setActive(i, add=false){ if(!add){ selected.clear(); } if(i>=0 && i<items.length) selected.add(i); }
 function isSelected(i){ return selected.has(i); }
 function firstSelected(){ return selected.size? [...selected][0] : -1; }
 
@@ -337,7 +333,7 @@ function restoreState(s){
   targets=s.targets||[]; tNow=s.tNow; W=s.W; H=s.H; CW=s.CW; CH=s.CH;
   selected=new Set(s.selected||[]); posSnap=s.posSnap; posGrid=s.posGrid;
   targetsLocked=!!s.targetsLocked; showTargets=!!s.showTargets; showItems=!!s.showItems;
-  canvas.width=CW; canvas.height=CH; draw(); drawTimeline(); updateTimeLabel(); syncPropPanel();
+  canvas.width=CW; canvas.height=CH; refreshPointerCache(); needRedraw=true; needTLRedraw=true; updateTimeLabel(); syncPropPanel();
 }
 
 // ====== 補間 ======
@@ -361,9 +357,10 @@ function getStateAtTime(it, t){
   return { x: it.pos.x, y: it.pos.y, rot: it.rotation||0 };
 }
 
-// ====== 描画 ======
-let W=1080,H=1080; // 枠＝GIF解像度
-let CW=canvas.width, CH=canvas.height; // 作業キャンバス
+// ====== 描画（RAF管理） ======
+let W=1080,H=1080;
+let CW=canvas.width, CH=canvas.height;
+let needRedraw=true, needTLRedraw=true;
 
 function drawFrame(){
   ctx.setTransform(1,0,0,1,0,0);
@@ -374,106 +371,68 @@ function drawFrame(){
 function drawTargets(){
   if(!showTargets || !targets.length) return;
   ctx.textAlign='center'; ctx.textBaseline='middle';
-  targets.forEach(t=>{
+  for(const t of targets){
     ctx.save();
     ctx.globalAlpha = targetsLocked ? 0.7 : 1;
     ctx.fillStyle='#878787'; ctx.strokeStyle='#ffffff'; ctx.lineWidth=3/view.scale;
     const R=50; ctx.beginPath(); ctx.arc(t.x,t.y,R,0,Math.PI*2); ctx.fill(); ctx.stroke();
     ctx.fillStyle='#ffffff'; ctx.font=(20/view.scale)+'px system-ui'; ctx.fillText(t.name||'T',t.x,t.y);
     ctx.restore();
-  });
+  }
 }
 function drawItem(it, pos, i){
   if(!showItems || !it.visible) return;
-  const s=1/view.scale;
-  const sx = it.scaleX ?? 1;
-  const sy = it.scaleY ?? 1;
-
-  ctx.save();
-  ctx.globalAlpha = it.alpha==null?1:it.alpha;
-
-  const angle = (pos.rot||0) * Math.PI/180;
-  ctx.translate(pos.x, pos.y);
-  ctx.rotate(angle);
-  ctx.scale(sx, sy);
+  const s=1/view.scale, sx=it.scaleX??1, sy=it.scaleY??1;
+  ctx.save(); ctx.globalAlpha = it.alpha==null?1:it.alpha;
+  const angle=(pos.rot||0)*Math.PI/180;
+  ctx.translate(pos.x,pos.y); ctx.rotate(angle); ctx.scale(sx,sy);
 
   if(it.type==='icon'||it.type==='circle'){
-    const r=it.r||40;
-    ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
+    const r=it.r||40; ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
     if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fill(); }
     if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.stroke(); }
-    const label=(it.text&&it.text.length?it.text:it.name)||'';
-    ctx.fillStyle=it.textColor||'#fff';
-    ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'ui-monospace');
-    ctx.textAlign='center'; ctx.textBaseline='middle';
+    const label=(it.text&&it.text.length?it.text:it.name)||''; ctx.fillStyle=it.textColor||'#fff';
+    ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'ui-monospace'); ctx.textAlign='center'; ctx.textBaseline='middle';
     wrapFillText(ctx,label,0,0,r*1.6*s,Math.max(8,(it.fontSize||20))*1.2*s);
-  }
-  else if(it.type==='triangle'){
-    const r=it.r||40;
-    ctx.beginPath();
-    ctx.moveTo(0, -r);
-    ctx.lineTo( r, r);
-    ctx.lineTo(-r, r);
-    ctx.closePath();
-    if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fill(); }
-    if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.stroke(); }
-    ctx.fillStyle=it.textColor||'#fff';
-    ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'system-ui');
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(it.text||it.name||'△', 0, 0);
-  }
-  else if(it.type==='rect'){
-    const w=it.w||160, h=it.h||90;
-    if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fillRect(-w/2,-h/2,w,h); }
+  } else if(it.type==='triangle'){
+    const r=it.r||40; ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r,r); ctx.lineTo(-r,r); ctx.closePath();
+    if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fill(); } if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.stroke(); }
+    ctx.fillStyle=it.textColor||'#fff'; ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'system-ui'); ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(it.text||it.name||'△',0,0);
+  } else if(it.type==='rect'){
+    const w=it.w||160,h=it.h||90; if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fillRect(-w/2,-h/2,w,h); }
     if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.strokeRect(-w/2,-h/2,w,h); }
-  }
-  else if(it.type==='textRect'){
-    const w=it.w||220, h=it.h||120;
-    if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fillRect(-w/2,-h/2,w,h); }
+  } else if(it.type==='textRect'){
+    const w=it.w||220,h=it.h||120; if(it.fill!=null){ ctx.fillStyle=it.fill; ctx.fillRect(-w/2,-h/2,w,h); }
     if(it.stroke){ ctx.strokeStyle=it.stroke; ctx.lineWidth=2*s; ctx.strokeRect(-w/2,-h/2,w,h); }
-    ctx.fillStyle=it.textColor||'#111';
-    ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'system-ui');
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    const lines=(it.text||'テキスト').split('\n');
-    lines.forEach((ln,iLine)=> ctx.fillText(ln, 0, (iLine-(lines.length-1)/2)*(Math.max(8,(it.fontSize||20))*1.2*s)));
-  }
-  else if(it.type==='image'){
-    const w=it.w||100, h=it.h||100;
-    if(it.image){ ctx.drawImage(it.image, -w/2, -h/2, w, h); }
+    ctx.fillStyle=it.textColor||'#111'; ctx.font=(Math.max(8,it.fontSize||20)*s)+'px '+(it.font||'system-ui'); ctx.textAlign='center'; ctx.textBaseline='middle';
+    const lines=(it.text||'テキスト').split('\n'); lines.forEach((ln,iLine)=> ctx.fillText(ln,0,(iLine-(lines.length-1)/2)*(Math.max(8,(it.fontSize||20))*1.2*s)));
+  } else if(it.type==='image'){
+    const w=it.w||100,h=it.h||100; if(it.image){ ctx.drawImage(it.image,-w/2,-h/2,w,h); }
   }
 
-  // 選択枠
   if(isSelected(i)){
     ctx.strokeStyle= it.locked ? '#9ca3af' : '#f59e0b';
     ctx.lineWidth=3*s;
     if(it.type==='rect'||it.type==='textRect'||it.type==='image'){
-      const w=(it.w||160), h=(it.h||90);
-      ctx.strokeRect(-w/2-4*s, -h/2-4*s, w+8*s, h+8*s);
-    } else {
-      const rr=(it.r||40)+4;
-      ctx.beginPath(); ctx.arc(0,0,rr,0,Math.PI*2); ctx.stroke();
+      const w=(it.w||160), h=(it.h||90); ctx.strokeRect(-w/2-4*s,-h/2-4*s,w+8*s,h+8*s);
+    }else{
+      const rr=(it.r||40)+4; ctx.beginPath(); ctx.arc(0,0,rr,0,Math.PI*2); ctx.stroke();
     }
   }
-  ctx.restore();
-  ctx.globalAlpha=1;
+  ctx.restore(); ctx.globalAlpha=1;
 }
 function wrapFillText(ctx, text, cx, cy, maxW, lineH){
   const words=(text+"").split(/\s+/); const lines=[]; let cur='';
   for(const w of words){ const test=cur?cur+' '+w:w; if(ctx.measureText(test).width<=maxW){ cur=test; } else { if(cur) lines.push(cur); cur=w; } }
-  if(cur) lines.push(cur);
-  const off=(lines.length-1)/2;
-  lines.forEach((ln,i)=> ctx.fillText(ln, cx, cy + (i-off)*lineH));
+  if(cur) lines.push(cur); const off=(lines.length-1)/2; lines.forEach((ln,i)=> ctx.fillText(ln, cx, cy + (i-off)*lineH));
 }
-function draw(){
-  drawFrame();
-  drawTargets();
-  items.forEach((it,i)=>{
-    const st=getStateAtTime(it,tNow);
-    it.pos.x=st.x; it.pos.y=st.y; it.rotation=st.rot;
-    drawItem(it, st, i);
-  });
-  const idx=firstSelected(); if(idx>=0){ const it=items[idx]; const st=getStateAtTime(it,tNow); coordReadout.textContent=`X: ${st.x|0}, Y: ${st.y|0}`; }
+
+function render(){
+  if(needRedraw){ needRedraw=false; drawFrame(); drawTargets(); items.forEach((it,i)=>{ const st=getStateAtTime(it,tNow); it.pos.x=st.x; it.pos.y=st.y; it.rotation=st.rot; drawItem(it, st, i); }); const idx=firstSelected(); if(idx>=0){ const it=items[idx]; const st=getStateAtTime(it,tNow); coordReadout.textContent=`X: ${st.x|0}, Y: ${st.y|0}`; } }
+  if(needTLRedraw){ needTLRedraw=false; drawTimeline(); }
+  requestAnimationFrame(render);
 }
+requestAnimationFrame(render);
 
 // ====== TL描画 ======
 function drawTimeline(){
@@ -494,48 +453,30 @@ function drawTimeline(){
 
   items.forEach((it,i)=>{
     const y=laneTop+i*(laneH+laneGap);
+    tctx.fillStyle='#f1f5f9'; tctx.fillRect(LEFT_PAD,y,ICON_W_LOCK,laneH);
+    tctx.strokeStyle='#e2e8f0'; tctx.strokeRect(LEFT_PAD+0.5,y+0.5,ICON_W_LOCK-1,laneH-1);
+    tctx.fillStyle= it.locked ? '#9a3412' : '#166534'; tctx.font='13px ui-sans-serif'; tctx.fillText(it.locked?'🔒':'🔓', LEFT_PAD+4, y+laneH-7);
 
-    // ロック切替セル
-    tctx.fillStyle='#f1f5f9';
-    tctx.fillRect(LEFT_PAD,y,ICON_W_LOCK,laneH);
-    tctx.strokeStyle='#e2e8f0';
-    tctx.strokeRect(LEFT_PAD+0.5,y+0.5,ICON_W_LOCK-1,laneH-1);
-    tctx.fillStyle= it.locked ? '#9a3412' : '#166534';
-    tctx.font='13px ui-sans-serif';
-    tctx.fillText(it.locked?'🔒':'🔓', LEFT_PAD+4, y+laneH-7);
+    tctx.fillStyle='#f1f5f9'; tctx.fillRect(LEFT_PAD+ICON_W_LOCK,y,ICON_W_EYE,laneH);
+    tctx.strokeStyle='#e2e8f0'; tctx.strokeRect(LEFT_PAD+ICON_W_LOCK+0.5,y+0.5,ICON_W_EYE-1,laneH-1);
+    tctx.fillStyle= it.visible ? '#334155' : '#64748b'; tctx.fillText(it.visible?'👁':'🙈', LEFT_PAD+ICON_W_LOCK+4, y+laneH-7);
 
-    // 可視/不可視セル
-    tctx.fillStyle='#f1f5f9';
-    tctx.fillRect(LEFT_PAD+ICON_W_LOCK,y,ICON_W_EYE,laneH);
-    tctx.strokeStyle='#e2e8f0';
-    tctx.strokeRect(LEFT_PAD+ICON_W_LOCK+0.5,y+0.5,ICON_W_EYE-1,laneH-1);
-    tctx.fillStyle= it.visible ? '#334155' : '#64748b';
-    tctx.fillText(it.visible?'👁':'🙈', LEFT_PAD+ICON_W_LOCK+4, y+laneH-7);
-
-    // 名前
-    tctx.fillStyle=isSelected(i)?'#111827':'#6b7280';
-    tctx.font='12px ui-sans-serif';
+    tctx.fillStyle=isSelected(i)?'#111827':'#6b7280'; tctx.font='12px ui-sans-serif';
     tctx.fillText((it.name||it.type)+(it.locked?' 🔒':''), NAME_X, y+laneH-6);
 
-    // バー
     const barMuted = it.locked || !it.visible;
     tctx.fillStyle= barMuted ? '#eef2ff' : '#e0e7ff';
     tctx.fillRect(80,y,TL.width-96,laneH);
-    tctx.strokeStyle='#c7d2fe';
-    tctx.strokeRect(80.5,y+0.5,TL.width-97,laneH-1);
+    tctx.strokeStyle='#c7d2fe'; tctx.strokeRect(80.5,y+0.5,TL.width-97,laneH-1);
 
-    // キーフレーム（◇）
     (it.keys||[]).forEach((k)=>{
       const x=tToX(k.t); const size=8;
       tctx.fillStyle= barMuted ? '#94a3b8' : '#2563eb';
-      tctx.beginPath();
-      tctx.moveTo(x,y+laneH/2-size); tctx.lineTo(x+size,y+laneH/2);
-      tctx.lineTo(x,y+laneH/2+size); tctx.lineTo(x-size,y+laneH/2);
-      tctx.closePath(); tctx.fill();
+      tctx.beginPath(); tctx.moveTo(x,y+laneH/2-size); tctx.lineTo(x+size,y+laneH/2);
+      tctx.lineTo(x,y+laneH/2+size); tctx.lineTo(x-size,y+laneH/2); tctx.closePath(); tctx.fill();
     });
   });
 
-  // 再生ヘッド
   const cx=tToX(tNow);
   tctx.strokeStyle='#f59e0b'; tctx.beginPath(); tctx.moveTo(cx,0); tctx.lineTo(cx,TL.height); tctx.stroke();
 }
@@ -543,174 +484,166 @@ function drawTimeline(){
 let draggingKF=null, tlPanning=false, tlPanPrev=0;
 TL.addEventListener('contextmenu',e=>e.preventDefault());
 TL.addEventListener('mousedown',e=>{
-  // Shift+ドラッグで横パン
   if(e.shiftKey){ const r=TL.getBoundingClientRect(); tlPanning=true; tlPanPrev=e.clientX-r.left; return; }
-
   if(e.button!==0) return;
   const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top;
-  const lane=laneIndexAtY(y); if(lane<0){
-    // レーン外：再生位置移動
-    tNow=applySnap(xToT(x)); updateTimeLabel(); draw(); drawTimeline(); return;
-  }
+  const lane=laneIndexAtY(y); if(lane<0){ tNow=applySnap(xToT(x)); updateTimeLabel(); needRedraw=true; needTLRedraw=true; return; }
   const it=items[lane];
 
-  // 左のロック/可視クリック
-  if(x>=LEFT_PAD && x<LEFT_PAD+ICON_W_LOCK){ it.locked=!it.locked; drawTimeline(); syncPropPanel(); return; }
-  if(x>=LEFT_PAD+ICON_W_LOCK && x<LEFT_PAD+ICON_W_LOCK+ICON_W_EYE){ it.visible=!it.visible; draw(); drawTimeline(); return; }
+  if(x>=LEFT_PAD && x<LEFT_PAD+ICON_W_LOCK){ it.locked=!it.locked; needTLRedraw=true; syncPropPanel(); return; }
+  if(x>=LEFT_PAD+ICON_W_LOCK && x<LEFT_PAD+ICON_W_LOCK+ICON_W_EYE){ it.visible=!it.visible; needRedraw=true; needTLRedraw=true; return; }
 
-  // Alt+クリック：最寄りKF削除
-  if(e.altKey && !it.locked){
-    const t=applySnap(xToT(x)); const kIdx = nearestKeyIndexAtTime(it, t);
-    if(kIdx>0){ // 先頭だけは残す（全削除防止）
-      pushUndo();
-      it.keys.splice(kIdx,1);
-      drawTimeline();
-    }
-    return;
-  }
-
-  // 選択更新
   const add = e.ctrlKey||e.metaKey;
   if(add){ if(isSelected(lane)) selected.delete(lane); else selected.add(lane); }
   else { selected = isSelected(lane) ? selected : new Set([lane]); }
   syncPropPanel();
 
-  // 既存キーフレームを掴む判定
   if(!it.locked && it.visible){
     const yMid=(laneTop+lane*(laneH+laneGap))+laneH/2; const th=10;
     for(let k=0;k<(it.keys||[]).length;k++){
       const gx=tToX(it.keys[k].t);
       if(Math.abs(gx-x)<=th && Math.abs(yMid-y)<=th){
-        pushUndo(); draggingKF={item:lane, key:k}; drawTimeline(); return;
+        pushUndo(); draggingKF={item:lane, key:k}; needTLRedraw=true; return;
       }
     }
   }
-
-  // 既存を掴まなかった場合は再生位置移動
-  tNow=applySnap(xToT(x)); updateTimeLabel(); draw(); drawTimeline();
+  tNow=applySnap(xToT(x)); updateTimeLabel(); needRedraw=true; needTLRedraw=true;
 });
-
-// ダブルクリック：そのレーンのその時刻にキーフレーム追加
-TL.addEventListener('dblclick', (e)=>{
-  const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top;
-  const lane=laneIndexAtY(y); if(lane<0) return;
-  const it=items[lane]; if(!it || it.locked || !it.visible) return;
-
-  const t = applySnap(xToT(x));
-  // 既に同一時刻があれば何もしない（誤爆防止）
-  const eps=1/120;
-  if((it.keys||[]).some(k=>Math.abs(k.t - t)<eps)) return;
-
-  pushUndo();
-  // その時刻の補間位置を取得してキー作成
-  const stAtT = getStateAtTime(it, t);
-  if(!Array.isArray(it.keys)) it.keys=[];
-  it.keys.push({ t, x: stAtT.x, y: stAtT.y, rot: stAtT.rot ?? (it.rotation||0) });
-  it.keys.sort((a,b)=>a.t-b.t);
-
-  // ついでに選択もそのレーンへ
-  selected=new Set([lane]);
-  tNow = t; // 追加した位置にヘッドを移動
-  updateTimeLabel(); draw(); drawTimeline(); syncPropPanel();
-});
-
-function nearestKeyAtTime(it, t){
-  if(!it.keys || !it.keys.length) return null;
-  let best = it.keys[0], bd = Math.abs(it.keys[0].t - t);
-  for(const k of it.keys){
-    const d = Math.abs(k.t - t);
-    if(d < bd){ bd = d; best = k; }
-  }
-  return best;
-}
-function nearestKeyIndexAtTime(it, t){
-  if(!it.keys || !it.keys.length) return -1;
-  let bestI = 0, bd = Math.abs(it.keys[0].t - t);
-  for(let i=0;i<it.keys.length;i++){
-    const d = Math.abs(it.keys[i].t - t);
-    if(d < bd){ bd = d; bestI = i; }
-  }
-  return bestI;
-}
-function ensureKeyAtNow(it){
-  const eps=1/120; const idx=it.keys.findIndex(k=>Math.abs(k.t-tNow)<eps);
-  if(idx<0){
-    const st=getStateAtTime(it,tNow);
-    it.keys.push({t:tNow,x:st.x,y:st.y,rot:st.rot});
-    it.keys.sort((a,b)=>a.t-b.t);
-  }
-}
-function keyRefAtNow(it){
-  ensureKeyAtNow(it);
-  const eps=1/120;
-  return it.keys.find(k=>Math.abs(k.t-tNow)<eps) || nearestKeyAtTime(it,tNow);
-}
-
 function laneIndexAtY(y){ if(y<laneTop) return -1; const idx=Math.floor((y-laneTop)/(laneH+laneGap)); return (idx>=0&&idx<items.length)?idx:-1; }
 window.addEventListener('mousemove',e=>{
   if(tlPanning){
     const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const pad=80,w=TL.width-pad-16; const vd=viewDur();
-    const dx=x-tlPanPrev; tlPanPrev=x; tlStart -= (dx/w)*vd; clampTlStart(); drawTimeline(); return;
+    const dx=x-tlPanPrev; tlPanPrev=x; tlStart -= (dx/w)*vd; clampTlStart(); needTLRedraw=true; return;
   }
   if(draggingKF){
     const it=items[draggingKF.item]; if(it.locked || !it.visible){ draggingKF=null; return; }
     const r=TL.getBoundingClientRect(); const x=e.clientX-r.left;
     let k=it.keys[draggingKF.key]; let t=applySnap(xToT(x)); t=Math.max(0,Math.min(duration,t));
-    k.t=t; const ref=k; it.keys.sort((a,b)=>a.t-b.t); draggingKF.key=it.keys.indexOf(ref); drawTimeline(); return;
+    k.t=t; const ref=k; it.keys.sort((a,b)=>a.t-b.t); draggingKF.key=it.keys.indexOf(ref); needTLRedraw=true; return;
   }
 });
 window.addEventListener('mouseup',()=>{ tlPanning=false; draggingKF=null; });
 
-// ====== キャンバス入力（複数選択 & マルキー） ======
+// ダブルクリック：TLにKF追加
+TL.addEventListener('dblclick',(e)=>{
+  const r=TL.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top;
+  const lane=laneIndexAtY(y); if(lane<0) return;
+  const it=items[lane]; if(!it || it.locked || !it.visible) return;
+  const t = applySnap(xToT(x));
+  const eps=1/120; if((it.keys||[]).some(k=>Math.abs(k.t - t)<eps)) return;
+  pushUndo();
+  const stAtT = getStateAtTime(it, t); if(!Array.isArray(it.keys)) it.keys=[];
+  it.keys.push({ t, x: stAtT.x, y: stAtT.y, rot: stAtT.rot ?? (it.rotation||0) });
+  it.keys.sort((a,b)=>a.t-b.t);
+  selected=new Set([lane]); tNow=t; updateTimeLabel(); needRedraw=true; needTLRedraw=true; syncPropPanel();
+});
+
+// キー操作ユーティリティ
+function ensureKeyAtNow(it){
+  const eps=1/120; const idx=it.keys.findIndex(k=>Math.abs(k.t-tNow)<eps);
+  if(idx<0){ const st=getStateAtTime(it,tNow); it.keys.push({t:tNow,x:st.x,y:st.y,rot:st.rot}); it.keys.sort((a,b)=>a.t-b.t); }
+}
+function keyRefAtNow(it){
+  ensureKeyAtNow(it); const eps=1/120;
+  return it.keys.find(k=>Math.abs(k.t-tNow)<eps) || nearestKeyAtTime(it,tNow);
+}
+function nearestKeyAtTime(it, t){ if(!it.keys || !it.keys.length) return null; let best = it.keys[0], bd = Math.abs(it.keys[0].t - t); for(const k of it.keys){ const d = Math.abs(k.t - t); if(d < bd){ bd = d; best = k; } } return best; }
+
+// ====== キャンバス入力（高速ドラッグ対応 Pointer Events） ======
 let dragging=false, dragKind='item';
 let marqueeOn=false, marqueeStartCss=null;
 
-// グループドラッグ用
-let groupDragAnchor = null; // {x,y} in Canvas
-let groupDragData = null;   // [{idx, x0, y0, key}]
+// グループドラッグ状態（RAFで消費）
+let dragState = {
+  active:false,
+  items:null,      // [{idx, x0, y0, key}]
+  anchor:null,     // {x,y} Canvas座標
+  pointer:null,    // {x,y} Canvas座標（最新）
+  kind:null        // 'items' | 'target'
+};
 
-canvas.addEventListener('contextmenu',e=>e.preventDefault());
-canvas.addEventListener('mousedown',e=>{
-  const pCanvas=getPointer(e);
+function beginItemsDrag(pCanvas, withIdxSet){
+  pushUndo();
+  dragState.active = true;
+  dragState.kind = 'items';
+  dragState.anchor = pCanvas;
+  dragState.pointer = pCanvas;
+  dragState.items = [...withIdxSet].map(idx=>{
+    const st=getStateAtTime(items[idx], tNow);
+    const kr = keyRefAtNow(items[idx]); // 確定キー参照
+    return { idx, x0: st.x, y0: st.y, key: kr };
+  });
+}
+function applyDragPositions(){
+  if(!dragState.active || !dragState.pointer || !dragState.items) return;
+  const dxRaw = dragState.pointer.x - dragState.anchor.x;
+  const dyRaw = dragState.pointer.y - dragState.anchor.y;
+
+  // 追従優先：ドラッグ中はスナップ無効（設定で切替）
+  const dx = (dragSnapDisable ? dxRaw : snapDelta(dxRaw));
+  const dy = (dragSnapDisable ? dyRaw : snapDelta(dyRaw));
+
+  if(dragState.kind==='target'){
+    const s=dragState.items[0]; const t=targets[s.idx]; if(!t) return;
+    t.x = s.x0 + dx; t.y = s.y0 + dy; needRedraw=true; return;
+  }
+  if(dragState.kind==='items'){
+    for(const s of dragState.items){
+      const it=items[s.idx]; if(!it || it.locked || !it.visible) continue;
+      const nx = s.x0 + dx;
+      const ny = s.y0 + dy;
+      if(s.key){ s.key.x = nx; s.key.y = ny; }
+    }
+    needRedraw=true;
+  }
+}
+
+// RAFでドラッグ更新
+let draggingRAF = false;
+function ensureDraggingLoop(){
+  if(draggingRAF) return;
+  draggingRAF = true;
+  const loop = ()=>{ if(dragState.active){ applyDragPositions(); requestAnimationFrame(loop); } else { draggingRAF=false; } };
+  requestAnimationFrame(loop);
+}
+
+// pointerdown
+canvas.addEventListener('pointerdown', (e)=>{
+  canvas.setPointerCapture(e.pointerId);
+  const pCanvas=getPointerCanvasXY(e);
   if(e.button===1||e.button===2||spaceDown){ panning=true; panPrev=pCanvas; return; }
 
   const w=screenToWorld(pCanvas);
 
-  // 1) ターゲット（任意）
+  // ターゲット
   if(showTargets && !targetsLocked){
     for(let i=targets.length-1;i>=0;i--){
       const t=targets[i], dx=w.x-t.x, dy=w.y-t.y;
       if(dx*dx+dy*dy<=50*50){
-        pushUndo(); dragging=true; dragKind='target';
-        groupDragAnchor=pCanvas;
-        groupDragData=[{idx:i, x0:t.x, y0:t.y, key:null}];
+        pushUndo();
+        dragState.active=true; dragState.kind='target';
+        dragState.anchor=pCanvas; dragState.pointer=pCanvas;
+        dragState.items=[{idx:i, x0:t.x, y0:t.y, key:null}];
+        ensureDraggingLoop();
         return;
       }
     }
   }
 
-  // 2) アイテム（前面優先）
+  // アイテム
   for(let i=items.length-1;i>=0;i--){
     const it=items[i]; if(!showItems || !it.visible) continue; if(it.locked) continue;
     if(hitItem(it,w)){
-      pushUndo();
       if(e.ctrlKey||e.metaKey){ if(selected.has(i)) selected.delete(i); else selected.add(i); }
       else{ selected = new Set([i]); }
-
-      groupDragAnchor = pCanvas;
-      groupDragData = [...selected].map(idx=>{
-        const st=getStateAtTime(items[idx], tNow);
-        const kr = keyRefAtNow(items[idx]);
-        return { idx, x0: st.x, y0: st.y, key: kr };
-      });
-
-      dragging=true; dragKind='items';
-      syncPropPanel(); draw();
+      syncPropPanel();
+      beginItemsDrag(pCanvas, selected);
+      ensureDraggingLoop();
       return;
     }
   }
 
-  // 3) 空白：マルキー開始（CSS座標）
+  // 空白：マルキー
   marqueeOn = true;
   marqueeStartCss = { x: e.clientX, y: e.clientY };
   marqueeEl.style.display = 'block';
@@ -721,62 +654,77 @@ canvas.addEventListener('mousedown',e=>{
   updateMarqueeSelection(e.clientX, e.clientY);
 });
 
-canvas.addEventListener('mousemove',e=>{
+// pointermove
+canvas.addEventListener('pointermove', (e)=>{
+  refreshPointerCache(); // 低コスト（プロパティ参照）、ただしリサイズ後のズレ防止
+  const pCanvas=getPointerCanvasXY(e);
+
+  // パン
+  if(panning && panPrev){
+    const dx=pCanvas.x-panPrev.x, dy=pCanvas.y-panPrev.y;
+    setView(view.scale,view.x+dx,view.y+dy); panPrev=pCanvas; return;
+  }
+
   // マルキー更新
   if(marqueeOn && marqueeStartCss){
+    const x2 = e.clientX, y2 = e.clientY;
     const x1 = marqueeStartCss.x, y1 = marqueeStartCss.y;
-    const x2 = e.clientX,        y2 = e.clientY;
     const left = Math.min(x1,x2), top = Math.min(y1,y2);
     const w = Math.abs(x2-x1),   h   = Math.abs(y2-y1);
-    marqueeEl.style.left = `${left}px`;
-    marqueeEl.style.top  = `${top}px`;
-    marqueeEl.style.width = `${w}px`;
-    marqueeEl.style.height= `${h}px`;
+    marqueeEl.style.left = `${left}px`; marqueeEl.style.top  = `${top}px`;
+    marqueeEl.style.width = `${w}px`;   marqueeEl.style.height= `${h}px`;
     updateMarqueeSelection(x2, y2);
     return;
   }
 
-  // パン
-  if(panning && panPrev){
-    const cur=getPointer(e); // Canvas座標で追跡
-    const dx=cur.x-panPrev.x, dy=cur.y-panPrev.y;
-    setView(view.scale,view.x+dx,view.y+dy); panPrev=cur; return;
+  // ドラッグ
+  if(dragState.active){
+    dragState.pointer = pCanvas;
+    // ここでは draw() しない。RAF側がまとめて描画
+    return;
   }
+});
 
-  // グループドラッグ
-  if(!dragging || !groupDragAnchor || !groupDragData) return;
-  const curCanvas=getPointer(e);
-  const dx = snapDelta(curCanvas.x - groupDragAnchor.x);
-  const dy = snapDelta(curCanvas.y - groupDragAnchor.y);
+// pointerup / cancel
+function endPointer(e){
+  try{ canvas.releasePointerCapture(e.pointerId); }catch(_){}
+  if(panning && panPrev){ panning=false; panPrev=null; }
 
-  if(dragKind==='target'){
-    const s=groupDragData[0];
-    const t=targets[s.idx]; if(!t) return;
-    t.x = s.x0 + dx; t.y = s.y0 + dy;
-    draw(); return;
-  }
-
-  if(dragKind==='items'){
-    for(const s of groupDragData){
-      const it=items[s.idx]; if(!it || it.locked || !it.visible) continue;
-      const nx = s.x0 + dx;
-      const ny = s.y0 + dy;
-      if(s.key){ s.key.x = nx; s.key.y = ny; }
+  // ドラッグ終了：必要なら最終スナップ
+  if(dragState.active){
+    if(!dragSnapDisable && posSnap){
+      // 既にスナップ済み
+    }else if(posSnap){
+      // 離した時だけスナップ
+      for(const s of (dragState.items||[])){
+        const it=items[s.idx]; if(!it || !it.keys) continue;
+        const eps=1/120; const k = it.keys.find(k=>Math.abs(k.t-tNow)<eps) || it.keys[it.keys.length-1];
+        if(k){ k.x = snapCoord(k.x); k.y = snapCoord(k.y); }
+      }
     }
-    draw(); return;
+    dragState.active=false; dragState.items=null; dragState.anchor=null; dragState.pointer=null;
+    needRedraw=true;
   }
-});
 
-window.addEventListener('mouseup',()=>{
-  if(marqueeOn){
-    marqueeOn=false; marqueeStartCss=null; marqueeEl.style.display='none';
+  if(marqueeOn){ marqueeOn=false; marqueeStartCss=null; marqueeEl.style.display='none'; }
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+
+// ヒットテスト（スケール考慮、回転近似無視）
+function hitItem(it, w){
+  const st = getStateAtTime(it, tNow);
+  const sx = it.scaleX ?? 1, sy = it.scaleY ?? 1;
+  if(it.type==='icon' || it.type==='circle' || it.type==='triangle'){
+    const r = (it.r||40) * Math.max(sx, sy);
+    const dx = w.x - st.x, dy = w.y - st.y; return (dx*dx + dy*dy <= r*r);
+  } else {
+    const hw = ( (it.w||160) / 2 ) * sx; const hh = ( (it.h||90) / 2 ) * sy;
+    return (Math.abs(w.x - st.x) <= hw && Math.abs(w.y - st.y) <= hh);
   }
-  dragging=false; dragKind='item';
-  groupDragAnchor=null; groupDragData=null;
-  panning=false; panPrev=null;
-});
+}
 
-// マルキー選択（CSS→Canvas→World）
+// マルキー選択
 function updateMarqueeSelection(curCssX, curCssY){
   const x1 = marqueeStartCss.x, y1 = marqueeStartCss.y;
   const x2 = curCssX,           y2 = curCssY;
@@ -792,79 +740,51 @@ function updateMarqueeSelection(curCssX, curCssY){
     const st=getStateAtTime(items[i], tNow);
     if(st.x>=p1.x && st.x<=p2.x && st.y>=p1.y && st.y<=p2.y) selected.add(i);
   }
-  syncPropPanel(); draw();
+  syncPropPanel(); needRedraw=true;
 }
 
-// 置き換え：スケール考慮のヒットテスト（回転は近似無視）
-function hitItem(it, w){
-  const st = getStateAtTime ? getStateAtTime(it, tNow) : { x: it.x, y: it.y, rot: it.rotation||0 };
-  const sx = it.scaleX ?? 1;
-  const sy = it.scaleY ?? 1;
-
-  if(it.type==='icon' || it.type==='circle' || it.type==='triangle'){
-    const baseR = it.r || 40;
-    const r = baseR * Math.max(sx, sy);
-    const dx = w.x - st.x, dy = w.y - st.y;
-    return (dx*dx + dy*dy <= r*r);
-  } else {
-    const baseW = it.w || 160, baseH = it.h || 90;
-    const hw = (baseW / 2) * sx;
-    const hh = (baseH / 2) * sy;
-    return (Math.abs(w.x - st.x) <= hw && Math.abs(w.y - st.y) <= hh);
-  }
-}
-
-// ====== キャンバス：ホイールでズーム & Spaceでパン ======
+// ====== キャンバス：ホイールでズーム ======
 canvas.addEventListener('wheel', (e)=>{
   e.preventDefault();
-  const factor = Math.pow(1.001, -e.deltaY); // 下スクロールで拡大
+  refreshPointerCache();
+  const factor = Math.pow(1.001, -e.deltaY);
   const oldScale = view.scale;
   const newScale = clamp(oldScale * factor, MIN_S, MAX_S);
-  const pCanvas = getPointer(e);
-  const world   = screenToWorld(pCanvas);   // ズーム前のワールド位置を固定
+  const pCanvas = getPointerCanvasXY(e);
+  const world   = screenToWorld(pCanvas);
   view.x = pCanvas.x - world.x * newScale;
   view.y = pCanvas.y - world.y * newScale;
   setView(newScale, view.x, view.y);
 }, { passive:false });
 
+// Spaceパン
 window.addEventListener('keydown', (e)=>{
   if(e.code === 'Space' && !spaceDown){
-    spaceDown = true;
-    canvas.style.cursor = 'grab';
-    e.preventDefault();
+    spaceDown = true; canvas.style.cursor = 'grab'; e.preventDefault();
   }
 });
 window.addEventListener('keyup', (e)=>{
-  if(e.code === 'Space'){
-    spaceDown = false;
-    canvas.style.cursor = '';
-  }
+  if(e.code === 'Space'){ spaceDown = false; canvas.style.cursor = ''; }
 });
 
 // ====== TL：Ctrl+ホイールで横ズーム ======
 TL.addEventListener('wheel', (e)=>{
-  if(!e.ctrlKey) return; // 通常スクロールはそのまま
+  if(!e.ctrlKey) return;
   e.preventDefault();
-
   const rect = TL.getBoundingClientRect();
   const x = e.clientX - rect.left;
-
   const pad = 80;
   const w = TL.width - pad - 16;
   const vd_before = viewDur();
   const t_at_cursor = tlStart + ((x - pad) / w) * vd_before;
-
   const factor = Math.pow(1.001, -e.deltaY);
   tlZoom = clamp(tlZoom * factor, 0.25, 4);
-
   const vd_after = viewDur();
   tlStart = t_at_cursor - ((x - pad) / w) * vd_after;
   clampTlStart();
-
   const tlZoomInput = document.getElementById('tlZoom');
   if(tlZoomInput) tlZoomInput.value = String(tlZoom);
-
-  drawTimeline();
+  needTLRedraw=true;
 }, { passive:false });
 
 // ====== プロパティパネル ======
@@ -919,33 +839,21 @@ document.getElementById('applyProps').onclick=()=>{
   const idx=firstSelected(); if(idx<0) return;
   const it=items[idx]; if(it.locked){ alert('このアイテムはロック中です。'); return; }
   pushUndo();
-
-  // 現在時刻のキー参照
   ensureKeyAtNow(it);
   const eps=1/120;
   const k = it.keys.find(k=>Math.abs(k.t-tNow)<eps) || nearestKeyAtTime(it,tNow);
-
-  // 位置
   const nx = snapCoord(parseFloat(propX.value)||it.pos.x);
   const ny = snapCoord(parseFloat(propY.value)||it.pos.y);
   k.x = nx; k.y = ny;
 
-  // 回転
-  it.rotation = parseFloat(propRotation.value)||0;
-  k.rot = it.rotation;
+  it.rotation = parseFloat(propRotation.value)||0; k.rot = it.rotation;
 
-  // スケール
-  let sx = parseFloat(propScaleX.value);
-  let sy = parseFloat(propScaleY.value);
-  if(!Number.isFinite(sx) || sx<=0) sx = 1;
-  if(!Number.isFinite(sy) || sy<=0) sy = 1;
+  let sx = parseFloat(propScaleX.value); let sy = parseFloat(propScaleY.value);
+  if(!Number.isFinite(sx) || sx<=0) sx = 1; if(!Number.isFinite(sy) || sy<=0) sy = 1;
   if (lockUniform && lockUniform.checked) sy = sx;
-  sx = Math.max(0.1, Math.min(10, sx));
-  sy = Math.max(0.1, Math.min(10, sy));
-  it.scaleX = sx;
-  it.scaleY = sy;
+  sx = Math.max(0.1, Math.min(10, sx)); sy = Math.max(0.1, Math.min(10, sy));
+  it.scaleX = sx; it.scaleY = sy;
 
-  // その他
   const maxR=Math.min(W,H)/2;
   it.name=propName.value||it.name;
   it.r=Math.max(1, Math.min(maxR, parseFloat(propSize.value)||it.r));
@@ -962,26 +870,26 @@ document.getElementById('applyProps').onclick=()=>{
   posSnap = !!posSnapOn.checked;
   posGrid = Math.max(1, Math.min(512, parseInt(posSnapGrid.value,10)||posGrid));
 
-  draw(); drawTimeline(); syncPropPanel();
+  needRedraw=true; needTLRedraw=true; syncPropPanel();
 };
 
 // ロックトグル
 propLocked.addEventListener('change', ()=>{
   const idx=firstSelected(); if(idx<0) return;
-  items[idx].locked = !!propLocked.checked; setBadge(!!items[idx].locked); drawTimeline();
+  items[idx].locked = !!propLocked.checked; setBadge(!!items[idx].locked); needTLRedraw=true;
 });
 
 // レイヤーUI
 const showTargetsChk=document.getElementById('showTargets');
 const showItemsChk=document.getElementById('showItems');
 const lockTargetsChk=document.getElementById('lockTargets');
-showTargetsChk.addEventListener('change',()=>{ showTargets = !!showTargetsChk.checked; draw(); });
-showItemsChk.addEventListener('change',()=>{ showItems = !!showItemsChk.checked; draw(); drawTimeline(); });
-lockTargetsChk.addEventListener('change',()=>{ targetsLocked = !!lockTargetsChk.checked; draw(); });
+showTargetsChk.addEventListener('change',()=>{ showTargets = !!showTargetsChk.checked; needRedraw=true; });
+showItemsChk.addEventListener('change',()=>{ showItems = !!showItemsChk.checked; needRedraw=true; needTLRedraw=true; });
+lockTargetsChk.addEventListener('change',()=>{ targetsLocked = !!lockTargetsChk.checked; needRedraw=true; });
 
 // 一括操作
-document.getElementById('lockSelBtn').onclick=()=>{ if(!selected.size) return; for(const i of selected) items[i].locked=true; drawTimeline(); syncPropPanel(); };
-document.getElementById('unlockSelBtn').onclick=()=>{ if(!selected.size) return; for(const i of selected) items[i].locked=false; drawTimeline(); syncPropPanel(); };
+document.getElementById('lockSelBtn').onclick=()=>{ if(!selected.size) return; for(const i of selected) items[i].locked=true; needTLRedraw=true; syncPropPanel(); };
+document.getElementById('unlockSelBtn').onclick=()=>{ if(!selected.size) return; for(const i of selected) items[i].locked=false; needTLRedraw=true; syncPropPanel(); };
 
 // ====== 表示順序 ======
 const bringFront=document.getElementById('bringFront');
@@ -993,7 +901,7 @@ function moveItem(idx, newIdx){
   if(items[idx].locked){ alert('ロック中のため順序を変更できません。'); return; }
   if(newIdx<0) newIdx=0; if(newIdx>=items.length) newIdx=items.length-1;
   const [it]=items.splice(idx,1); items.splice(newIdx,0,it);
-  selected=new Set([newIdx]); draw(); drawTimeline();
+  selected=new Set([newIdx]); needRedraw=true; needTLRedraw=true;
 }
 bringFront.onclick=()=>moveItem(firstSelected(), items.length-1);
 sendBack.onclick=()=>moveItem(firstSelected(), 0);
@@ -1008,14 +916,14 @@ const frameWInput=document.getElementById('frameW');
 const frameHInput=document.getElementById('frameH');
 const lockFrameAspect=document.getElementById('lockFrameAspect');
 
-document.getElementById('applyCanvasSize').onclick=()=>{ pushUndo(); let w=parseInt(canvasWInput.value,10); let h=parseInt(canvasHInput.value,10); if(!Number.isFinite(w)||w<64) w=64; if(!Number.isFinite(h)||h<64) h=64; if(lockAspect && lockAspect.checked){ const ratio=CW/Math.max(1,CH); if(document.activeElement===canvasWInput){ h=Math.round(w/ratio); } else if(document.activeElement===canvasHInput){ w=Math.round(h*ratio); } } canvas.width=w; canvas.height=h; CW=w; CH=h; fitToFrame(); draw(); };
+document.getElementById('applyCanvasSize').onclick=()=>{ pushUndo(); let w=parseInt(canvasWInput.value,10); let h=parseInt(canvasHInput.value,10); if(!Number.isFinite(w)||w<64) w=64; if(!Number.isFinite(h)||h<64) h=64; if(lockAspect && lockAspect.checked){ const ratio=CW/Math.max(1,CH); if(document.activeElement===canvasWInput){ h=Math.round(w/ratio); } else if(document.activeElement===canvasHInput){ w=Math.round(h*ratio); } } canvas.width=w; canvas.height=h; CW=w; CH=h; refreshPointerCache(); fitToFrame(); needRedraw=true; };
 
-document.getElementById('applyFrameSize').onclick=()=>{ pushUndo(); let w=parseInt(frameWInput.value,10); let h=parseInt(frameHInput.value,10); if(!Number.isFinite(w)||w<64) w=64; if(!Number.isFinite(h)||h<64) h=64; if(lockFrameAspect && lockFrameAspect.checked){ const ratio=W/Math.max(1,H); if(document.activeElement===frameWInput){ h=Math.round(w/ratio); } else if(document.activeElement===frameHInput){ w=Math.round(h*ratio); } } W=w; H=h; updateSizeMax(); fitToFrame(); draw(); drawTimeline(); };
+document.getElementById('applyFrameSize').onclick=()=>{ pushUndo(); let w=parseInt(frameWInput.value,10); let h=parseInt(frameHInput.value,10); if(!Number.isFinite(w)||w<64) w=64; if(!Number.isFinite(h)||h<64) h=64; if(lockFrameAspect && lockFrameAspect.checked){ const ratio=W/Math.max(1,H); if(document.activeElement===frameWInput){ h=Math.round(w/ratio); } else if(document.activeElement===frameHInput){ w=Math.round(h*ratio); } } W=w; H=h; updateSizeMax(); fitToFrame(); needRedraw=true; needTLRedraw=true; };
 
 function fitToFrame(){ const s=Math.min(canvas.width/W, canvas.height/H); const x=(canvas.width-W*s)/2; const y=(canvas.height-H*s)/2; setView(s,x,y); }
 
 // ====== 追加ボタン ======
-function addWithDefaults(obj){ items.push(obj); selected=new Set([items.length-1]); syncPropPanel(); draw(); drawTimeline(); }
+function addWithDefaults(obj){ items.push(obj); selected=new Set([items.length-1]); syncPropPanel(); needRedraw=true; needTLRedraw=true; }
 
 document.getElementById('addIconBtn').onclick=()=>{ pushUndo(); const name=prompt('アイコン名（例: X1）')||'X'; const x=W*0.5, y=H*0.5; addWithDefaults({type:'icon',name,fill:'#9ca3af',stroke:'#111',textColor:'#fff',font:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:20,r:40,alpha:1,rotation:0,w:80,h:80,text:'',pos:{x,y},keys:[{t:0,x,y,rot:0}],locked:false,visible:true,scaleX:1,scaleY:1}); };
 document.getElementById('addCircleBtn').onclick=()=>{ pushUndo(); const x=W*0.5, y=H*0.5; addWithDefaults({type:'circle',name:'○',fill:'#0ea5e9',stroke:'#0a6fb2',textColor:'#ffffff',font:'system-ui',fontSize:20,r:40,alpha:1,rotation:0,pos:{x,y},w:80,h:80,text:'',keys:[{t:0,x,y,rot:0}],locked:false,visible:true,scaleX:1,scaleY:1}); };
@@ -1049,12 +957,12 @@ document.getElementById('addImageBtn').onclick=()=>{
   reader.readAsDataURL(file);
 };
 
-document.getElementById('deleteItemBtn').onclick=()=>{ if(!selected.size) return; pushUndo(); const remain=[]; items.forEach((it,i)=>{ if(selected.has(i)&&!it.locked){} else remain.push(it); }); items=remain; selected.clear(); draw(); drawTimeline(); syncPropPanel(); };
+document.getElementById('deleteItemBtn').onclick=()=>{ if(!selected.size) return; pushUndo(); const remain=[]; items.forEach((it,i)=>{ if(selected.has(i)&&!it.locked){} else remain.push(it); }); items=remain; selected.clear(); needRedraw=true; needTLRedraw=true; syncPropPanel(); };
 
 // ====== KFボタン ======
-document.getElementById('addKF').onclick=()=>{ if(!selected.size) return; pushUndo(); for(const i of selected){ const it=items[i]; if(it.locked) continue; ensureKeyAtNow(it); } drawTimeline(); };
-document.getElementById('delKF').onclick=()=>{ if(!selected.size) return; pushUndo(); for(const i of selected){ const it=items[i]; if(!it||!it.keys||it.keys.length<=1||it.locked) continue; it.keys.pop(); } drawTimeline(); };
-document.getElementById('clearKF').onclick=()=>{ if(!selected.size) return; pushUndo(); for(const i of selected){ const it=items[i]; if(!it||it.locked) continue; it.keys=[it.keys[0]]; } drawTimeline(); };
+document.getElementById('addKF').onclick=()=>{ if(!selected.size) return; pushUndo(); for(const i of selected){ const it=items[i]; if(it.locked) continue; ensureKeyAtNow(it); } needTLRedraw=true; };
+document.getElementById('delKF').onclick=()=>{ if(!selected.size) return; pushUndo(); for(const i of selected){ const it=items[i]; if(!it||!it.keys||it.keys.length<=1||it.locked) continue; it.keys.pop(); } needTLRedraw=true; };
+document.getElementById('clearKF').onclick=()=>{ if(!selected.size) return; pushUndo(); for(const i of selected){ const it=items[i]; if(!it||it.locked) continue; it.keys=[it.keys[0]]; } needTLRedraw=true; };
 
 // ====== 再生 ======
 const playBtn=document.getElementById('playBtn');
@@ -1062,12 +970,12 @@ const pauseBtn=document.getElementById('pauseBtn');
 const resetTimeBtn=document.getElementById('resetTimeBtn');
 playBtn.onclick=()=>{ isPlaying=true; lastTs=0; requestAnimationFrame(loop); };
 pauseBtn.onclick=()=>{ isPlaying=false; };
-resetTimeBtn.onclick=()=>{ tNow=0; updateTimeLabel(); draw(); drawTimeline(); };
-function loop(ts){ if(!isPlaying) return; if(!lastTs) lastTs=ts; const dt=(ts-lastTs)/1000; lastTs=ts; tNow+=dt; if(tNow>duration){ tNow=duration; isPlaying=false; } updateTimeLabel(); draw(); drawTimeline(); requestAnimationFrame(loop); }
+resetTimeBtn.onclick=()=>{ tNow=0; updateTimeLabel(); needRedraw=true; needTLRedraw=true; };
+function loop(ts){ if(!isPlaying) return; if(!lastTs) lastTs=ts; const dt=(ts-lastTs)/1000; lastTs=ts; tNow+=dt; if(tNow>duration){ tNow=duration; isPlaying=false; } updateTimeLabel(); needRedraw=true; needTLRedraw=true; requestAnimationFrame(loop); }
 
 // ====== キーボード（Undo/Redo, Delete, Copy/Paste） ======
 window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; const z=e.key.toLowerCase()==='z'; const y=e.key.toLowerCase()==='y'; if((e.ctrlKey||e.metaKey) && z && !e.shiftKey){ e.preventDefault(); undo(); } else if((e.ctrlKey||e.metaKey) && ( (z && e.shiftKey) || y )){ e.preventDefault(); redo(); } });
-window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; if(e.key==="Delete" || e.key==="Backspace"){ if(!selected.size) return; pushUndo(); const remain=[]; items.forEach((it,i)=>{ if(selected.has(i)&&!it.locked){} else remain.push(it); }); items=remain; selected.clear(); draw(); drawTimeline(); e.preventDefault(); return; } });
+window.addEventListener('keydown', (e)=>{ const tag=document.activeElement?.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; if(e.key==="Delete" || e.key==="Backspace"){ if(!selected.size) return; pushUndo(); const remain=[]; items.forEach((it,i)=>{ if(selected.has(i)&&!it.locked){} else remain.push(it); }); items=remain; selected.clear(); needRedraw=true; needTLRedraw=true; e.preventDefault(); return; } });
 
 // クリップボード（アプリ内）
 let clipItem=null;
@@ -1100,7 +1008,7 @@ window.addEventListener('keydown',(e)=>{
       if(Array.isArray(cp.keys)){ cp.keys.forEach(k=>{ k.x+=20; k.y+=20; }); }
       items.push(cp);
       selected=new Set([items.length-1]);
-      syncPropPanel(); draw(); drawTimeline();
+      syncPropPanel(); needRedraw=true; needTLRedraw=true;
     }
     e.preventDefault();
   }
@@ -1112,12 +1020,12 @@ const tlViewportH=document.getElementById('tlViewportH');
 const durationInput=document.getElementById('duration');
 const snapKeysChk=document.getElementById('snapKeys');
 const snapStepInput=document.getElementById('snapStep');
-function resizeTL(){ const mw=document.querySelector('main')?.clientWidth||1200; TL.width=Math.min(1200, mw-24); const h=parseInt(tlViewportH.value,10)||220; document.getElementById('timelineWrap').style.maxHeight=h+'px'; drawTimeline(); }
+function resizeTL(){ const mw=document.querySelector('main')?.clientWidth||1200; TL.width=Math.min(1200, mw-24); const h=parseInt(tlViewportH.value,10)||220; document.getElementById('timelineWrap').style.maxHeight=h+'px'; needTLRedraw=true; }
 window.addEventListener('resize',resizeTL);
 
-tlZoomInput.addEventListener('input',()=>{ const prev=viewDur(); tlZoom=parseFloat(tlZoomInput.value)||1; const next=viewDur(); tlStart += (prev-next)/2; clampTlStart(); drawTimeline(); });
+tlZoomInput.addEventListener('input',()=>{ const prev=viewDur(); tlZoom=parseFloat(tlZoomInput.value)||1; const next=viewDur(); tlStart += (prev-next)/2; clampTlStart(); needTLRedraw=true; });
 
-durationInput.addEventListener('change',()=>{ duration=Math.max(1,parseFloat(durationInput.value)||8); if(tNow>duration) tNow=duration; clampTlStart(); draw(); drawTimeline(); document.getElementById('expEnd').value=String(duration); });
+durationInput.addEventListener('change',()=>{ duration=Math.max(1,parseFloat(durationInput.value)||8); if(tNow>duration) tNow=duration; clampTlStart(); needRedraw=true; needTLRedraw=true; document.getElementById('expEnd').value=String(duration); });
 
 tlViewportH && tlViewportH.addEventListener('change',resizeTL);
 
@@ -1141,43 +1049,19 @@ const expScale=document.getElementById('expScale');
 const expStart=document.getElementById('expStart');
 const expEnd=document.getElementById('expEnd');
 function makeOffscreen(scale){ const off=document.createElement('canvas'); off.width=Math.round(W*scale); off.height=Math.round(H*scale); return off; }
-exportBtn.onclick=async ()=>{ if(typeof GIF==='undefined'){ alert('GIF.js を読み込めませんでした。ネット接続またはCDNの許可をご確認ください。'); return; } const fps=Math.max(1, Math.min(60, parseInt(expFps.value,10)||20)); const scale=Math.max(0.25, Math.min(2, parseFloat(expScale.value)||1)); let t0=Math.max(0, parseFloat(expStart.value)||0); let t1=Math.max(0, parseFloat(expEnd.value)||duration); if(t1<t0){ const tmp=t0; t0=t1; t1=tmp; } t0=Math.max(0, Math.min(duration, t0)); t1=Math.max(0, Math.min(duration, t1)); const totalFrames = Math.max(1, Math.round((t1 - t0) * fps) + 1); isPlaying=false; exportBtn.disabled=true; exportStatus.textContent=`レンダリング準備 (${totalFrames} frames)`; exportProgress.value=0; exportProgress.max=totalFrames; const off=makeOffscreen(scale); const octx=off.getContext('2d'); const gif=new GIF({workers:2, quality:10, workerScript:'https://unpkg.com/gif.js@0.2.0/dist/gif.worker.js'}); let savedView={...view}; let savedT=tNow; try{ for(let i=0;i<totalFrames;i++){ const tt = t0 + (i/(totalFrames-1))*(t1-t0); tNow=tt; updateTimeLabel(); const prevView={...view}; setView(1,0,0); draw(); view=prevView; octx.setTransform(1,0,0,1,0,0); octx.clearRect(0,0,off.width, off.height); octx.drawImage(canvas, 0,0, off.width, off.height); gif.addFrame(octx, {copy:true, delay: Math.round(1000/fps)}); if(i%5===0){ exportStatus.textContent=`フレーム ${i+1}/${totalFrames}`; } exportProgress.value=i+1; await new Promise(r=>setTimeout(r,0)); } }catch(e){ console.error('Export error', e); alert('書き出し中にエラーが発生しました: '+e.message); tNow=savedT; view=savedView; updateTimeLabel(); draw(); drawTimeline(); exportBtn.disabled=false; exportStatus.textContent='失敗'; return; } gif.on('finished', (blob)=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='animation.gif'; a.click(); tNow=savedT; view=savedView; updateTimeLabel(); draw(); drawTimeline(); exportBtn.disabled=false; exportStatus.textContent='完了'; }); exportStatus.textContent='エンコード中…'; gif.render(); };
+exportBtn.onclick=async ()=>{ if(typeof GIF==='undefined'){ alert('GIF.js を読み込めませんでした。ネット接続またはCDNの許可をご確認ください。'); return; } const fps=Math.max(1, Math.min(60, parseInt(expFps.value,10)||20)); const scale=Math.max(0.25, Math.min(2, parseFloat(expScale.value)||1)); let t0=Math.max(0, parseFloat(expStart.value)||0); let t1=Math.max(0, parseFloat(expEnd.value)||duration); if(t1<t0){ const tmp=t0; t0=t1; t1=tmp; } t0=Math.max(0, Math.min(duration, t0)); t1=Math.max(0, Math.min(duration, t1)); const totalFrames = Math.max(1, Math.round((t1 - t0) * fps) + 1); isPlaying=false; exportBtn.disabled=true; exportStatus.textContent=`レンダリング準備 (${totalFrames} frames)`; exportProgress.value=0; exportProgress.max=totalFrames; const off=makeOffscreen(scale); const octx=off.getContext('2d'); const gif=new GIF({workers:2, quality:10, workerScript:'https://unpkg.com/gif.js@0.2.0/dist/gif.worker.js'}); let savedView={...view}; let savedT=tNow; try{ for(let i=0;i<totalFrames;i++){ const tt = t0 + (i/(totalFrames-1))*(t1-t0); tNow=tt; updateTimeLabel(); const prevView={...view}; setView(1,0,0); needRedraw=true; renderOnceNow(); view=prevView; octx.setTransform(1,0,0,1,0,0); octx.clearRect(0,0,off.width, off.height); octx.drawImage(canvas, 0,0, off.width, off.height); gif.addFrame(octx, {copy:true, delay: Math.round(1000/fps)}); exportProgress.value=i+1; await new Promise(r=>setTimeout(r,0)); } }catch(e){ console.error('Export error', e); alert('書き出し中にエラーが発生しました: '+e.message); tNow=savedT; view=savedView; updateTimeLabel(); needRedraw=true; needTLRedraw=true; exportBtn.disabled=false; exportStatus.textContent='失敗'; return; } gif.on('finished', (blob)=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='animation.gif'; a.click(); tNow=savedT; view=savedView; updateTimeLabel(); needRedraw=true; needTLRedraw=true; exportBtn.disabled=false; exportStatus.textContent='完了'; }); exportStatus.textContent='エンコード中…'; gif.render(); };
+function renderOnceNow(){ // 同期描画ヘルパ（エクスポート用）
+  drawFrame(); drawTargets(); items.forEach((it,i)=>{ const st=getStateAtTime(it,tNow); drawItem(it, st, i); });
+}
 
 // ====== プロジェクト セーブ/ロード ======
-const LS_KEY = 'dragpath_gif_animator_project_v3';
-function serializeProject(){
-  const s = cloneState();
-  s.meta = { savedAt: new Date().toISOString(), app:'Drag-Path GIF Animator', version:3 };
-  return JSON.stringify(s);
-}
-function deserializeProject(jsonStr){
-  const data = JSON.parse(jsonStr);
-  if(!data || !data.items || !Array.isArray(data.items)) throw new Error('プロジェクト形式が不正です');
-  return data;
-}
-function saveToLocal(){
-  try{ const json = serializeProject(); localStorage.setItem(LS_KEY, json); toast('保存しました（ブラウザ内）'); }
-  catch(e){ alert('保存に失敗しました: '+e.message); }
-}
-function loadFromLocal(){
-  try{ const json = localStorage.getItem(LS_KEY); if(!json){ alert('保存データが見つかりません'); return; }
-    const data = deserializeProject(json); restoreState(data); toast('読み込み完了'); }
-  catch(e){ alert('読み込みに失敗しました: '+e.message); }
-}
-function downloadJson(){
-  try{ const json = serializeProject(); const blob = new Blob([json], {type:'application/json'});
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    const dt = new Date().toISOString().replace(/[:.]/g,'-'); a.download = `gif_animator_project_${dt}.json`; a.click(); URL.revokeObjectURL(a.href); toast('JSONダウンロード開始'); }
-  catch(e){ alert('ダウンロードに失敗しました: '+e.message); }
-}
-function uploadJson(file){
-  const reader = new FileReader();
-  reader.onload = e=>{
-    try{ const data = deserializeProject(e.target.result); restoreState(data); toast('JSONから読み込み完了'); }
-    catch(err){ alert('JSONの読み込みに失敗: '+err.message); }
-  };
-  reader.readAsText(file);
-}
+const LS_KEY = 'dragpath_gif_animator_project_v4_fastdrag';
+function serializeProject(){ const s = cloneState(); s.meta = { savedAt: new Date().toISOString(), app:'Drag-Path GIF Animator', version:4, perf:'fast-drag'}; return JSON.stringify(s); }
+function deserializeProject(jsonStr){ const data = JSON.parse(jsonStr); if(!data || !data.items || !Array.isArray(data.items)) throw new Error('プロジェクト形式が不正です'); return data; }
+function saveToLocal(){ try{ const json = serializeProject(); localStorage.setItem(LS_KEY, json); toast('保存しました（ブラウザ内）'); } catch(e){ alert('保存に失敗しました: '+e.message); } }
+function loadFromLocal(){ try{ const json = localStorage.getItem(LS_KEY); if(!json){ alert('保存データが見つかりません'); return; } const data = deserializeProject(json); restoreState(data); toast('読み込み完了'); } catch(e){ alert('読み込みに失敗しました: '+e.message); } }
+function downloadJson(){ try{ const json = serializeProject(); const blob = new Blob([json], {type:'application/json'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); const dt = new Date().toISOString().replace(/[:.]/g,'-'); a.download = `gif_animator_project_${dt}.json`; a.click(); URL.revokeObjectURL(a.href); toast('JSONダウンロード開始'); } catch(e){ alert('ダウンロードに失敗しました: '+e.message); } }
+function uploadJson(file){ const reader = new FileReader(); reader.onload = e=>{ try{ const data = deserializeProject(e.target.result); restoreState(data); toast('JSONから読み込み完了'); } catch(err){ alert('JSONの読み込みに失敗: '+err.message); } }; reader.readAsText(file); }
 let toastTimer=null;
 function toast(msg){
   let el = document.getElementById('toast');
@@ -1220,7 +1104,8 @@ function init(){
   document.getElementById('showTargets').checked=showTargets;
   document.getElementById('showItems').checked=showItems;
   document.getElementById('lockTargets').checked=targetsLocked;
-  draw(); scheduleAutosave();
+  refreshPointerCache();
+  needRedraw=true; needTLRedraw=true;
 }
 init();
 
